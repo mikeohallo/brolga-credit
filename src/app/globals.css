@@ -1,0 +1,224 @@
+@import "tailwindcss";
+
+/* Brolga Credit — a fixed light theme. The demo runs on a projector or a shared
+   screen; one deliberate look beats an automatic dark flip. */
+@theme {
+  --color-paper: #f5f4ef;
+  --color-surface: #ffffff;
+  --color-surface-2: #faf9f6;
+  --color-line: #e5e2da;
+  --color-line-strong: #cfcbc0;
+  --color-ink: #1b1d1c;
+  --color-ink-2: #55605b;
+  --color-ink-3: #8a938e;
+  --color-brand: #0f5c50;
+  --color-brand-strong: #0a463d;
+  --color-brand-soft: #e2efeb;
+  --color-brand-ink: #0b3f37;
+  --color-accent: #c6432e;
+  --color-good: #1f7a4d;
+  --color-good-soft: #e1f2e8;
+  --color-warn: #8f6200;
+  --color-warn-soft: #fbf0d3;
+  --color-serious: #b4471e;
+  --color-serious-soft: #fae5dc;
+  --color-critical: #b3261e;
+  --color-critical-soft: #f9e0de;
+  --color-info: #2a5da6;
+  --color-info-soft: #e4ecf8;
+  --color-neutral-soft: #eceae4;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 14px;
+  --shadow-card: 0 1px 2px rgba(27, 29, 28, 0.04), 0 8px 24px -16px rgba(27, 29, 28, 0.18);
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11", "tnum";
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+  font-weight: 600;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 10px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  border: 1px solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 80ms ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.btn-primary {
+  background: var(--color-brand);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-brand-strong);
+}
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  border-color: var(--color-line-strong);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-surface-2);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--color-ink-2);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-neutral-soft);
+  color: var(--color-ink);
+}
+.btn-danger {
+  background: var(--color-surface);
+  color: var(--color-critical);
+  border-color: #efc5c2;
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-critical-soft);
+}
+.btn-sm {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8125rem;
+  border-radius: 8px;
+}
+
+.input,
+.select {
+  width: 100%;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.input:focus,
+.select:focus {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px rgba(15, 92, 80, 0.15);
+}
+
+.navlink {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  color: var(--color-ink-2);
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.navlink:hover {
+  background: var(--color-neutral-soft);
+  color: var(--color-ink);
+}
+.navlink[data-active="true"] {
+  background: var(--color-brand-soft);
+  color: var(--color-brand-ink);
+  font-weight: 600;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+.table th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+  font-weight: 600;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface-2);
+}
+.table td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid var(--color-line);
+  vertical-align: middle;
+}
+.table tr:last-child td {
+  border-bottom: none;
+}
+.table tbody tr:hover td {
+  background: var(--color-surface-2);
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 220ms ease-out both;
+}
+
+::selection {
+  background: rgba(15, 92, 80, 0.2);
+}
