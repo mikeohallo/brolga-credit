@@ -104,6 +104,10 @@ Design choices worth knowing:
 - The sandbox enforces a `$1,000` daily PayTo collection limit (`ZPPAY01`) and
   one payment per agreement period; a payment left under investigation counts
   against the period.
+- The portal's "available scopes" list and the documentation's list disagree.
+  The portal offers `counterparties`, `float_accounts` and `payments_payouts`,
+  which the docs never mention, and does not offer `cop_account_validations`
+  at all for this account.
 - Confirmation of Payee, alias resolution (PayID lookup) and Investigations need
   account-level enablement beyond the documented scope list; with the scope
-  present but the feature off, CoP answers `403 "not permitted"`.
+  string on the token but the feature off, CoP answers `403 "not permitted"`.

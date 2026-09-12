@@ -32,8 +32,8 @@ export async function GET(req: Request) {
           await fn();
           probes.push({ name, scope, ok: true });
         } catch (err) {
-          if (err instanceof ZeptoError && err.requiredScope) probes.push({ name, scope, ok: false, note: `missing scope ${err.requiredScope}` });
-          else if (err instanceof ZeptoError) probes.push({ name, scope, ok: err.status < 500 && err.status !== 403, note: `${err.code ?? err.status} ${err.title}` });
+          if (err instanceof ZeptoError && err.requiredScope) probes.push({ name, scope, ok: false, note: scope === "cop_account_validations" ? "not enabled for this account" : `missing scope ${err.requiredScope}` });
+          else if (err instanceof ZeptoError) probes.push({ name, scope, ok: err.status < 500 && err.status !== 403, note: err.status === 403 ? "not enabled for this account" : `${err.code ?? err.status} ${err.title}` });
           else probes.push({ name, scope, ok: false, note: (err as Error).message });
         }
       };
