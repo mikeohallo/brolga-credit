@@ -105,10 +105,12 @@ export async function verifyBorrower(borrowerId: string, simulate?: CopSimulate)
     };
   } catch (err) {
     if (err instanceof ZeptoError) {
-      const error = err.requiredScope
-        ? `Scope "${err.requiredScope}" missing on this token`
-        : err.status === 403
-          ? "Confirmation of Payee (Zepto Validate) is not enabled on this sandbox account — Zepto switches it on per account"
+      // The sandbox portal does not even offer the cop_account_validations scope
+      // to this account, so both the "missing scope" and the "not permitted"
+      // shapes mean the same thing: Zepto Validate is switched on per account.
+      const error =
+        err.status === 403
+          ? "Confirmation of Payee (Zepto Validate) is not enabled on this sandbox account — Zepto switches it on per account, and the portal does not offer the scope until they do"
           : `${err.code ?? err.status} ${err.title}: ${err.detail}`;
       borrower.cop = { uid, result: "error", simulated: simulate, checkedAt: new Date().toISOString(), error };
     } else throw err;
