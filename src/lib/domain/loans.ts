@@ -7,6 +7,8 @@ export const LENDER_NAME = "Brolga Credit";
 export const ESTABLISHMENT_FEE_BPS = 400; // 4% flat establishment fee, no interest — keeps the maths legible on screen
 const FINAL_PAYOUT_STATES = new Set(["cleared", "returned", "rejected", "voided"]);
 const FINAL_INSTALMENT_STATES = new Set(["settled", "failed"]);
+const IN_FLIGHT_INSTALMENT_STATES = new Set(["unknown", "created", "submitting", "pending", "under_investigation"]);
+const REVERSAL_WATCH_MS = 60 * 60 * 1000; // keep looking for the payout_reversal for an hour after a failure
 
 // ---------------------------------------------------------------------------
 // Funding source: prefer an NPP-capable float; otherwise the primary linked
@@ -105,12 +107,12 @@ export async function verifyBorrower(borrowerId: string, simulate?: CopSimulate)
     };
   } catch (err) {
     if (err instanceof ZeptoError) {
-      // The sandbox portal does not even offer the cop_account_validations scope
-      // to this account, so both the "missing scope" and the "not permitted"
-      // shapes mean the same thing: Zepto Validate is switched on per account.
+      // A refusal is recorded as "unavailable", never as a pass and never as a
+      // definite diagnosis: the usual cause on a sandbox is that Zepto Validate has
+      // not been switched on for the account, but the API does not say so.
       const error =
         err.status === 403
-          ? "Confirmation of Payee (Zepto Validate) is not enabled on this sandbox account — Zepto switches it on per account, and the portal does not offer the scope until they do"
+          ? `Zepto refused the Confirmation of Payee request (403${err.detail ? `: ${err.detail}` : ""}). Recorded as unavailable; the cause is unconfirmed — account-level access to Zepto Validate is the usual reason on a sandbox.`
           : `${err.code ?? err.status} ${err.title}: ${err.detail}`;
       borrower.cop = { uid, result: "error", simulated: simulate, checkedAt: new Date().toISOString(), error };
     } else throw err;
@@ -120,7 +122,7 @@ export async function verifyBorrower(borrowerId: string, simulate?: CopSimulate)
 }
 
 // ---------------------------------------------------------------------------
-// Loans
+// Loans — quoting, creation, accounting
 // ---------------------------------------------------------------------------
 export function quote(principalCents: number, termFortnights: number) {
   const fee = Math.round((principalCents * ESTABLISHMENT_FEE_BPS) / 10_000);
@@ -129,13 +131,28 @@ export function quote(principalCents: number, termFortnights: number) {
   return { principalCents, feeCents: total - principalCents, instalmentCents: instalment, totalCents: total, termFortnights };
 }
 
+/** What the borrower owes in total: principal + fee ± recorded adjustments. */
+export function obligationCents(loan: Loan): number {
+  return loan.principalCents + loan.feeCents + (loan.adjustments ?? []).reduce((s, a) => s + a.cents, 0);
+}
+
+export function settledCents(loan: Loan): number {
+  return loan.instalments.filter((i) => i.state === "settled").reduce((s, i) => s + i.amountCents, 0);
+}
+
+export function outstandingCents(loan: Loan): number {
+  return obligationCents(loan) - settledCents(loan);
+}
+
 export function createLoan(input: { borrowerId: string; principalCents: number; termFortnights: number; purpose: string }): Loan {
   const db = loadDb();
   const borrower = getBorrower(input.borrowerId);
   if (!borrower) throw new Error(`Unknown borrower ${input.borrowerId}`);
-  if (input.principalCents < 10_000 || input.principalCents > 5_000_000) throw new Error("Principal must be between $100 and $50,000");
-  if (input.termFortnights < 1 || input.termFortnights > 26) throw new Error("Term must be between 1 and 26 fortnights");
-  const q = quote(input.principalCents, input.termFortnights);
+  const principalCents = input.principalCents;
+  const termFortnights = input.termFortnights;
+  if (!Number.isInteger(principalCents) || principalCents < 10_000 || principalCents > 5_000_000) throw new Error("Principal must be a whole number of cents between $100 and $50,000");
+  if (!Number.isInteger(termFortnights) || termFortnights < 1 || termFortnights > 26) throw new Error("Term must be a whole number of fortnights between 1 and 26");
+  const q = quote(principalCents, termFortnights);
   const today = sydneyDate();
   const instalments: Instalment[] = Array.from({ length: q.termFortnights }, (_, i) => ({
     n: i + 1,
@@ -145,21 +162,29 @@ export function createLoan(input: { borrowerId: string; principalCents: number; 
     attempts: 0,
   }));
   const now = new Date().toISOString();
+  const copVerified = !!borrower.cop && (borrower.cop.result === "match" || borrower.cop.result === "close_match");
+  const copHold = !!borrower.cop && (borrower.cop.result === "no_match" || borrower.cop.result === "account_closed");
   const loan: Loan = {
     id: nextId("loan"),
     borrowerId: borrower.id,
-    purpose: input.purpose,
+    purpose: (input.purpose || "Personal loan").slice(0, 60),
     principalCents: q.principalCents,
     feeCents: q.feeCents,
     termFortnights: q.termFortnights,
     instalmentCents: q.instalmentCents,
-    status: borrower.cop && borrower.cop.result !== "error" ? "verified" : "draft",
+    status: copVerified ? "verified" : "draft",
+    copHold,
+    copOverride: null,
+    disbursementAttempts: 0,
+    adjustments: [],
     instalments,
     events: [],
     createdAt: now,
     updatedAt: now,
   };
   pushEvent(loan, "loan.created", `Loan created for ${borrower.name}: ${aud(q.principalCents)} over ${q.termFortnights} fortnights, ${aud(q.instalmentCents)} per instalment`);
+  if (copHold) pushEvent(loan, "loan.cop_hold", `Confirmation of Payee returned "${borrower.cop!.result.replace("_", " ")}" — disbursement is held until an override is recorded`, "warning");
+  else if (!copVerified) pushEvent(loan, "loan.cop_unavailable", "Confirmation of Payee was not completed for this borrower; the loan is a draft, not verified", "warning");
   db.loans.push(loan);
   saveDb();
   return loan;
@@ -176,19 +201,21 @@ export function disbursementSettled(d: Disbursement | null | undefined): "pendin
 }
 
 export function deriveStatus(loan: Loan): LoanStatus {
-  if (loan.status === "cancelled") return "cancelled";
   const d = loan.disbursement;
   const m = loan.mandate;
-  if (!d) return loan.status === "verified" ? "verified" : "draft";
+  if (!d) return loan.status === "verified" || (!loan.copHold && loan.copOverride) ? "verified" : "draft";
   const settled = disbursementSettled(d);
   if (settled === "failed") return "disbursement_failed";
   if (settled === "pending") return "disbursing";
-  if (!m) return "disbursed";
+  const repaid = outstandingCents(loan) <= 0 && loan.instalments.every((i) => !IN_FLIGHT_INSTALMENT_STATES.has(i.state));
+  if (!m) return repaid ? "closed" : "disbursed";
   if (m.state === "pending" || m.state === "created") return "mandate_pending";
-  if (m.state === "declined" || m.state === "expired" || m.state === "failed") return "disbursed";
-  if (m.state === "cancelled") return loan.instalments.every((i) => i.state === "settled") ? "closed" : "cancelled";
+  if (m.state === "declined" || m.state === "expired" || m.state === "failed") return repaid ? "closed" : "disbursed";
+  // A cancelled mandate is a cancelled *authority*, not a cancelled loan: the debt
+  // is still owed until it is repaid, and a replacement mandate can revive collection.
+  if (m.state === "cancelled") return repaid ? "closed" : "cancelled";
   if (m.state === "suspended") return "suspended";
-  if (loan.instalments.every((i) => i.state === "settled")) return "closed";
+  if (repaid) return "closed";
   if (loan.instalments.some((i) => i.state === "failed")) return "in_arrears";
   return "active";
 }
@@ -199,75 +226,145 @@ function settle(loan: Loan) {
   saveDb();
 }
 
-export async function disburse(loanId: string, opts: { forceFailure?: "de_account_not_found" | "npp_not_enabled" } = {}): Promise<Loan> {
+// ---------------------------------------------------------------------------
+// Disbursement. The idempotency key is persisted as an "intent" BEFORE the request
+// goes out and is reused until Zepto answers, so a lost response can never mint a
+// second payout: replaying the key returns a 409 with the ref of the payout the
+// first attempt created, and that ref is adopted.
+// ---------------------------------------------------------------------------
+export async function recordCopOverride(loanId: string, by: string, reason: string): Promise<Loan> {
   const loan = getLoan(loanId);
   if (!loan) throw new Error(`Unknown loan ${loanId}`);
-  if (loan.disbursement && disbursementSettled(loan.disbursement) !== "failed") throw new Error("This loan already has a disbursement in flight or completed");
-  const borrower = await ensureContact(getBorrower(loan.borrowerId)!);
-  const f = await withApiContext(`${loan.id} · choose funding account`, funding);
-  const z = getZepto();
-
-  // Sandbox failures are amount-driven ($1.05 → E105, $3.03 → E303). To demo a failed
-  // disbursement we send the special amount and say so loudly in the event log.
-  let amount = loan.principalCents;
-  if (opts.forceFailure === "de_account_not_found") amount = 105;
-  if (opts.forceFailure === "npp_not_enabled") amount = 303;
-  const channels: PayoutChannel[] = opts.forceFailure === "npp_not_enabled" && f.nppCapable ? ["new_payments_platform", "direct_entry"] : f.channels;
-
-  const key = `brolga-${runId()}-${loan.id.toLowerCase()}-disburse-${loan.disbursement ? Date.now().toString(36) : "1"}`;
-  const batch = await withApiContext(`${loan.id} · disburse`, () =>
-    z.createPayment({
-      description: `${LENDER_NAME} loan ${loan.id} disbursement`,
-      matures_at: nowIsoSeconds(),
-      channels,
-      your_bank_account_id: f.account.id,
-      metadata: { loan_id: loan.id, borrower_id: borrower.id, app: "brolga-credit" },
-      payouts: [
-        {
-          amount,
-          description: `${LENDER_NAME} ${loan.id}`.slice(0, 280),
-          recipient_contact_id: borrower.zeptoContactId!,
-          metadata: { loan_id: loan.id },
-        },
-      ],
-      idempotency_key: key,
-    }),
-  );
-  const payout = batch.payouts[0];
-  const now = new Date().toISOString();
-  loan.disbursement = {
-    paymentRef: batch.ref,
-    payoutRef: payout.ref,
-    status: payout.status,
-    channels: batch.channels,
-    currentChannel: batch.channels[0],
-    fromBankAccountId: f.account.id,
-    fundingLabel: f.label,
-    failure: null,
-    createdAt: now,
-    updatedAt: now,
-  };
-  pushEvent(
-    loan,
-    "disbursement.created",
-    `${aud(amount)} sent to ${borrower.name} via ${channels[0] === "new_payments_platform" ? "NPP (real-time), Direct Entry fallback" : "Direct Entry"} from ${f.account.bank_name} — batch ${batch.ref}, payout ${payout.ref}` +
-      (opts.forceFailure ? ` (deliberate sandbox failure amount ${aud(amount)})` : ""),
-    "info",
-    batch.ref,
-  );
+  if (!loan.copHold) throw new Error("This loan is not on a Confirmation of Payee hold");
+  if (!reason || reason.trim().length < 10) throw new Error("An override needs a reason of at least ten characters — it is audited");
+  loan.copOverride = { by: by || "loan officer", reason: reason.trim(), at: new Date().toISOString() };
+  loan.copHold = false;
+  pushEvent(loan, "loan.cop_override", `Confirmation of Payee hold overridden by ${loan.copOverride.by}: ${loan.copOverride.reason}`, "warning");
   settle(loan);
   return loan;
 }
 
+export async function disburse(loanId: string, opts: { forceFailure?: "de_account_not_found" | "npp_not_enabled" } = {}): Promise<Loan> {
+  const loan = getLoan(loanId);
+  if (!loan) throw new Error(`Unknown loan ${loanId}`);
+  if (loan.copHold) throw new Error("Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason");
+  if (loan.disbursement && disbursementSettled(loan.disbursement) !== "failed") throw new Error("This loan already has a disbursement in flight or completed");
+  const borrower = await ensureContact(getBorrower(loan.borrowerId)!);
+  const z = getZepto();
+
+  // Reuse an unresolved intent (the previous attempt got no answer); otherwise mint one.
+  let intent = loan.disbursementIntent ?? null;
+  if (!intent) {
+    const f = await withApiContext(`${loan.id} · choose funding account`, funding);
+    // Sandbox failures are amount-driven ($1.05 → E105, $3.03 → E303). To demo a failed
+    // disbursement we send the special amount and say so loudly in the event log.
+    let amount = loan.principalCents;
+    if (opts.forceFailure === "de_account_not_found") amount = 105;
+    if (opts.forceFailure === "npp_not_enabled") amount = 303;
+    const channels: PayoutChannel[] = opts.forceFailure === "npp_not_enabled" && f.nppCapable ? ["new_payments_platform", "direct_entry"] : f.channels;
+    const attempt = (loan.disbursementAttempts ?? 0) + 1;
+    intent = {
+      key: `brolga-${runId()}-${loan.id.toLowerCase()}-disburse-${attempt}`,
+      attempt,
+      amountCents: amount,
+      channels,
+      fromBankAccountId: f.account.id,
+      fundingLabel: f.label,
+      forceFailure: opts.forceFailure,
+      createdAt: new Date().toISOString(),
+      outcome: "sending",
+    };
+    loan.disbursementAttempts = attempt;
+    loan.disbursementIntent = intent;
+    saveDb();
+  } else {
+    pushEvent(loan, "disbursement.recovering", `Re-sending disbursement attempt ${intent.attempt} with the same idempotency key — the previous answer was lost`, "warning");
+  }
+
+  const adopt = (batch: { ref: string; channels: PayoutChannel[]; payouts: { ref: string; status: string }[] }) => {
+    const payout = batch.payouts[0];
+    const now = new Date().toISOString();
+    loan.disbursement = {
+      paymentRef: batch.ref,
+      payoutRef: payout.ref,
+      status: payout.status,
+      channels: batch.channels,
+      currentChannel: batch.channels[0],
+      fromBankAccountId: intent!.fromBankAccountId,
+      fundingLabel: intent!.fundingLabel,
+      failure: null,
+      attempt: intent!.attempt,
+      createdAt: now,
+      updatedAt: now,
+    };
+    loan.disbursementIntent = null;
+    pushEvent(
+      loan,
+      "disbursement.created",
+      `${aud(intent!.amountCents)} sent to ${borrower.name} via ${intent!.channels[0] === "new_payments_platform" ? "NPP (real-time), Direct Entry fallback" : "Direct Entry"} — batch ${batch.ref}, payout ${payout.ref}` +
+        (intent!.forceFailure ? ` (deliberate sandbox failure amount ${aud(intent!.amountCents)})` : ""),
+      "info",
+      batch.ref,
+    );
+  };
+
+  try {
+    const batch = await withApiContext(`${loan.id} · disburse`, () =>
+      z.createPayment({
+        description: `${LENDER_NAME} loan ${loan.id} disbursement`,
+        matures_at: nowIsoSeconds(),
+        channels: intent!.channels as PayoutChannel[],
+        your_bank_account_id: intent!.fromBankAccountId,
+        metadata: { loan_id: loan.id, borrower_id: borrower.id, app: "brolga-credit" },
+        payouts: [
+          {
+            amount: intent!.amountCents,
+            description: `${LENDER_NAME} ${loan.id}`.slice(0, 280),
+            recipient_contact_id: borrower.zeptoContactId!,
+            metadata: { loan_id: loan.id },
+          },
+        ],
+        idempotency_key: intent!.key,
+      }),
+    );
+    adopt(batch);
+  } catch (err) {
+    if (err instanceof ZeptoError && err.status === 409 && typeof err.meta?.resource_ref === "string") {
+      // Idempotent replay: Zepto already created this payout on an earlier attempt.
+      const ref = err.meta.resource_ref;
+      const batch = await withApiContext(`${loan.id} · recover payout ${ref}`, () => z.getPayment(ref));
+      pushEvent(loan, "disbursement.recovered", `Zepto reported the payout already existed (${ref}); adopted it instead of paying twice`, "warning", ref);
+      adopt(batch);
+    } else if (err instanceof ZeptoError && err.outcomeUnknown) {
+      intent.outcome = "unknown";
+      pushEvent(loan, "disbursement.unknown", `No answer from Zepto for disbursement attempt ${intent.attempt} (${err.title}). The idempotency key is kept; the next attempt re-sends the same request.`, "error");
+      settle(loan);
+      throw err;
+    } else {
+      // A definite rejection: the intent is spent, a fresh one is minted next time.
+      loan.disbursementIntent = null;
+      settle(loan);
+      throw err;
+    }
+  }
+  settle(loan);
+  return loan;
+}
+
+// ---------------------------------------------------------------------------
+// PayTo agreement (the repayment mandate)
+// ---------------------------------------------------------------------------
 export async function createMandate(loanId: string, opts: { simulate?: AgreementSimulate; delay?: number } = {}): Promise<Loan> {
   const loan = getLoan(loanId);
   if (!loan) throw new Error(`Unknown loan ${loanId}`);
   const borrower = getBorrower(loan.borrowerId)!;
   if (loan.mandate && ["pending", "created", "active", "suspended"].includes(loan.mandate.state)) throw new Error("This loan already has a live PayTo agreement");
+  if (outstandingCents(loan) <= 0) throw new Error("Nothing is owed on this loan");
   const f = await withApiContext(`${loan.id} · choose collection account`, funding);
   const z = getZepto();
-  const first = loan.instalments[0].dueDate;
-  const last = loan.instalments[loan.instalments.length - 1].dueDate;
+  const open = loan.instalments.filter((i) => i.state !== "settled");
+  const first = open[0]?.dueDate ?? loan.instalments[0].dueDate;
+  const last = open[open.length - 1]?.dueDate ?? loan.instalments[loan.instalments.length - 1].dueDate;
   const validityEnd = addDays(last, 14);
   const attempt = loan.mandate ? Date.now().toString(36) : "1";
   const uid = `brolga-${runId()}-${loan.id.toLowerCase()}-agr-${attempt}`;
@@ -310,35 +407,117 @@ export async function createMandate(loanId: string, opts: { simulate?: Agreement
   return loan;
 }
 
-export async function collect(loanId: string, n: number, opts: { simulate?: PaytoPaymentSimulate; delay?: number } = {}): Promise<Loan> {
-  const loan = getLoan(loanId);
-  if (!loan) throw new Error(`Unknown loan ${loanId}`);
-  const inst = loan.instalments.find((i) => i.n === n);
-  if (!inst) throw new Error(`No instalment ${n}`);
-  if (!loan.mandate || loan.mandate.state !== "active") throw new Error("The PayTo agreement is not active, so nothing can be collected");
-  if (inst.state !== "scheduled" && inst.state !== "failed") throw new Error(`Instalment ${n} is ${inst.state}`);
-  const z = getZepto();
-  inst.attempts += 1;
-  const uid = `brolga-${runId()}-${loan.id.toLowerCase()}-inst-${n}-${inst.attempts}`;
-  const p = await withApiContext(`${loan.id} · collect instalment ${n}`, () =>
-    z.createPaytoPayment({
-      uid,
-      agreement_uid: loan.mandate!.uid,
-      amount: loan.mandate!.instalmentCents,
-      reference: `${LENDER_NAME} ${loan.id} ${n}/${loan.termFortnights}`.slice(0, 35),
-      description: `${LENDER_NAME} loan ${loan.id} instalment ${n} of ${loan.termFortnights}`,
-      creditor_reference: `${loan.id}-${n}`,
-      metadata: { loan_id: loan.id, instalment: String(n), app: "brolga-credit" },
-      last_payment: n === loan.termFortnights ? true : undefined,
-      simulate: opts.simulate ?? "auto_settle",
-      delay: opts.delay ?? 3,
-    }),
-  );
+// ---------------------------------------------------------------------------
+// Collections. One place decides whether money may be pulled; the route, the UI
+// and the retry path all ask it.
+// ---------------------------------------------------------------------------
+export type Eligibility = { ok: true; instalment: Instalment } | { ok: false; instalment: Instalment | null; reason: string; waiting?: boolean };
+
+export function collectionEligibility(loan: Loan, n?: number): Eligibility {
+  const inst = n === undefined ? (loan.instalments.find((i) => i.state === "scheduled" || i.state === "failed" || i.state === "unknown") ?? null) : (loan.instalments.find((i) => i.n === n) ?? null);
+  if (n !== undefined && !inst) return { ok: false, instalment: null, reason: `No instalment ${n}` };
+  if (loan.copHold) return { ok: false, instalment: inst, reason: "Confirmation of Payee hold — no money moves on this loan" };
+  const funded = disbursementSettled(loan.disbursement);
+  if (!loan.disbursement) return { ok: false, instalment: inst, reason: "The loan has not been disbursed" };
+  if (funded === "failed") return { ok: false, instalment: inst, reason: "The disbursement failed — nothing can be collected on a loan the borrower never received" };
+  if (funded === "pending") return { ok: false, instalment: inst, reason: "Waiting for the funds to land in the borrower's account before any repayment is collected", waiting: true };
+  if (!loan.mandate || loan.mandate.state !== "active") return { ok: false, instalment: inst, reason: "PayTo agreement is not active" };
+  if (loan.mandate.pendingAmendment) return { ok: false, instalment: inst, reason: "An amendment is awaiting the borrower's authorisation", waiting: true };
+  if (!inst) return { ok: false, instalment: null, reason: outstandingCents(loan) <= 0 ? "All instalments settled" : "No instalment is open" };
+  const inFlight = loan.instalments.find((i) => i.n !== inst.n && IN_FLIGHT_INSTALMENT_STATES.has(i.state));
+  if (inFlight) return { ok: false, instalment: inst, reason: `Instalment ${inFlight.n} is still in flight (${inFlight.state.replace("_", " ")})`, waiting: true };
+  if (inst.state === "unknown") return { ok: true, instalment: inst };
+  if (inst.state !== "scheduled" && inst.state !== "failed") return { ok: false, instalment: inst, reason: `Instalment ${inst.n} is ${inst.state.replace("_", " ")}` };
+  const earlierOpen = loan.instalments.find((i) => i.n < inst.n && (i.state === "scheduled" || i.state === "unknown"));
+  if (earlierOpen) return { ok: false, instalment: inst, reason: `Instalment ${earlierOpen.n} comes first` };
+  if (inst.state === "scheduled" && inst.dueDate > sydneyDate()) return { ok: false, instalment: inst, reason: `Agreement permits one payment per fortnight; instalment ${inst.n} opens on ${shortDate(inst.dueDate)}` };
+  return { ok: true, instalment: inst };
+}
+
+export function nextCollectable(loan: Loan): { instalment: Instalment; reason?: string } | { instalment: null; reason: string } {
+  const e = collectionEligibility(loan);
+  if (e.ok) return { instalment: e.instalment };
+  return e.instalment ? { instalment: e.instalment, reason: e.reason } : { instalment: null, reason: e.reason };
+}
+
+async function adoptPayment(loan: Loan, inst: Instalment, p: { uid: string; state: Instalment["state"]; failure?: Instalment["failure"] }, note: string) {
   inst.paymentUid = p.uid;
   inst.state = p.state;
   inst.failure = p.failure ?? null;
   inst.updatedAt = new Date().toISOString();
-  pushEvent(loan, "instalment.initiated", `Instalment ${n} (${aud(inst.amountCents)}) initiated via PayTo — payment ${p.uid}`, "info", p.uid);
+  pushEvent(loan, "instalment.initiated", note, "info", p.uid);
+}
+
+export async function collect(loanId: string, n: number, opts: { simulate?: PaytoPaymentSimulate; delay?: number } = {}): Promise<Loan> {
+  const loan = getLoan(loanId);
+  if (!loan) throw new Error(`Unknown loan ${loanId}`);
+  const e = collectionEligibility(loan, n);
+  if (!e.ok) throw new Error(e.reason);
+  const inst = e.instalment;
+  const z = getZepto();
+
+  // A previous attempt got no answer: ask Zepto whether the intent went through
+  // before creating anything.
+  if (inst.state === "unknown" && inst.paymentUid) {
+    const found = await withApiContext(`${loan.id} · recover instalment ${n}`, async () => {
+      try {
+        return await z.getPaytoPayment(inst.paymentUid!);
+      } catch (err) {
+        if (err instanceof ZeptoError && err.status === 404) return null;
+        throw err;
+      }
+    });
+    if (found) {
+      await adoptPayment(loan, inst, found, `Instalment ${n}: the earlier request had gone through after all — adopted payment ${found.uid} (${found.state})`);
+      settle(loan);
+      return loan;
+    }
+    // Never created: fall through and send it again with the same uid.
+  } else {
+    inst.attempts += 1;
+    inst.paymentUid = `brolga-${runId()}-${loan.id.toLowerCase()}-inst-${n}-${inst.attempts}`;
+  }
+  const uid = inst.paymentUid!;
+  inst.state = "unknown"; // intent persisted before the request leaves
+  inst.updatedAt = new Date().toISOString();
+  saveDb();
+
+  try {
+    const p = await withApiContext(`${loan.id} · collect instalment ${n}`, () =>
+      z.createPaytoPayment({
+        uid,
+        agreement_uid: loan.mandate!.uid,
+        amount: inst.amountCents,
+        reference: `${LENDER_NAME} ${loan.id} ${n}/${loan.instalments.length}`.slice(0, 35),
+        description: `${LENDER_NAME} loan ${loan.id} instalment ${n} of ${loan.instalments.length}`,
+        creditor_reference: `${loan.id}-${n}`,
+        metadata: { loan_id: loan.id, instalment: String(n), app: "brolga-credit" },
+        last_payment: n === loan.instalments.length ? true : undefined,
+        simulate: opts.simulate ?? "auto_settle",
+        delay: opts.delay ?? 3,
+      }),
+    );
+    await adoptPayment(loan, inst, p, `Instalment ${n} (${aud(inst.amountCents)}) initiated via PayTo — payment ${p.uid}`);
+  } catch (err) {
+    if (err instanceof ZeptoError && err.outcomeUnknown) {
+      pushEvent(loan, "instalment.unknown", `No answer from Zepto for instalment ${n} (${err.title}); payment ${uid} is kept as an open intent and checked on the next refresh`, "error", uid);
+      settle(loan);
+      throw err;
+    }
+    if (err instanceof ZeptoError && err.status === 422 && err.code === "ZPPAY00") {
+      // Duplicate uid: it exists after all — adopt it.
+      const found = await withApiContext(`${loan.id} · recover instalment ${n}`, () => z.getPaytoPayment(uid));
+      await adoptPayment(loan, inst, found, `Instalment ${n}: Zepto already held payment ${uid}; adopted it`);
+      settle(loan);
+      return loan;
+    }
+    // Definite rejection: the intent is void.
+    inst.state = "scheduled";
+    inst.paymentUid = undefined;
+    inst.updatedAt = new Date().toISOString();
+    settle(loan);
+    throw err;
+  }
   settle(loan);
   return loan;
 }
@@ -349,17 +528,22 @@ export async function retryInstalment(loanId: string, n: number, opts: { simulat
   const inst = loan.instalments.find((i) => i.n === n);
   if (!inst?.paymentUid) throw new Error(`Instalment ${n} has no PayTo payment to retry`);
   if (inst.state !== "failed" || !inst.failure?.retryable) throw new Error(`Instalment ${n} is not retryable`);
+  const e = collectionEligibility(loan, n);
+  if (!e.ok) throw new Error(e.reason);
   const z = getZepto();
   await withApiContext(`${loan.id} · retry instalment ${n}`, () => z.retryPaytoPayment(inst.paymentUid!, opts.simulate ?? "auto_settle", opts.delay ?? 3));
   inst.attempts += 1;
   inst.state = "created";
   inst.failure = null;
   inst.updatedAt = new Date().toISOString();
-  pushEvent(loan, "instalment.retried", `Instalment ${n} retried (attempt ${inst.attempts})`, "info", inst.paymentUid);
+  pushEvent(loan, "instalment.retried", `Instalment ${n} retried (attempt ${inst.attempts}) for ${aud(inst.amountCents)} — the payment amount is the one on the original request`, "info", inst.paymentUid);
   settle(loan);
   return loan;
 }
 
+// ---------------------------------------------------------------------------
+// Agreement lifecycle
+// ---------------------------------------------------------------------------
 export async function suspendMandate(loanId: string, narrative: string, reason: SuspensionReason = "customer_requested"): Promise<Loan> {
   const loan = getLoan(loanId);
   if (!loan?.mandate) throw new Error("No PayTo agreement on this loan");
@@ -387,17 +571,75 @@ export async function debtorAction(loanId: string, action: "suspension" | "react
   return refreshLoan(loanId);
 }
 
+/**
+ * Plan a restructure. Money already settled, in flight, or sitting on a failed
+ * payment that can still be retried is "committed" at its own amount and never
+ * changes; only the remaining obligation is re-cut into N equal instalments at (or
+ * just under) the requested amount, with the cents of rounding recorded as an
+ * adjustment so the schedule always adds up to the debt.
+ */
+export function planRestructure(loan: Loan, requestedCents: number) {
+  if (!Number.isInteger(requestedCents) || requestedCents < 100) throw new Error("Instalment must be a whole number of cents, at least $1");
+  const committed = loan.instalments.filter((i) => i.state === "settled" || IN_FLIGHT_INSTALMENT_STATES.has(i.state) || (i.state === "failed" && i.failure?.retryable));
+  const committedCents = committed.reduce((s, i) => s + i.amountCents, 0);
+  const remainingCents = obligationCents(loan) - committedCents;
+  if (remainingCents <= 0) throw new Error("Nothing remains to restructure — every dollar is settled or committed to a payment in flight");
+  const count = Math.max(1, Math.ceil(remainingCents / requestedCents));
+  const instalmentCents = Math.ceil(remainingCents / count);
+  const roundingCents = instalmentCents * count - remainingCents;
+  const open = loan.instalments.filter((i) => !committed.includes(i));
+  const today = sydneyDate();
+  const firstDueDate = open.length && open[0].dueDate >= today ? open[0].dueDate : today;
+  const lastDueDate = addDays(firstDueDate, 14 * (count - 1));
+  return { instalmentCents, count, roundingCents, remainingCents, firstDueDate, lastDueDate, committedCount: committed.length };
+}
+
 export async function amendMandate(loanId: string, newInstalmentCents: number, opts: { simulate?: "debtor_accept" | "debtor_decline" | "expire"; delay?: number } = {}): Promise<Loan> {
   const loan = getLoan(loanId);
   if (!loan?.mandate) throw new Error("No PayTo agreement on this loan");
-  if (newInstalmentCents < 100) throw new Error("Instalment must be at least $1");
+  if (loan.mandate.state !== "active") throw new Error("Only an active agreement can be amended");
+  if (loan.mandate.pendingAmendment) throw new Error("An amendment is already awaiting the borrower");
+  const plan = planRestructure(loan, newInstalmentCents);
   const z = getZepto();
-  const changes = { payment_terms: { amount: newInstalmentCents } };
+  const changes = { payment_terms: { amount: plan.instalmentCents, last_payment_date: plan.lastDueDate }, validity_end_date: addDays(plan.lastDueDate, 14) };
   await withApiContext(`${loan.id} · amend agreement`, () => z.amendAgreement(loan.mandate!.uid, changes, opts.simulate ?? "debtor_accept", opts.delay ?? 4));
-  loan.mandate.pendingAmendment = { requestedAt: new Date().toISOString(), changes };
-  pushEvent(loan, "mandate.amendment_requested", `Amendment sent for authorisation: instalment ${aud(loan.mandate.instalmentCents)} → ${aud(newInstalmentCents)}`, "info", loan.mandate.uid);
+  loan.mandate.pendingAmendment = { requestedAt: new Date().toISOString(), changes, plan: { instalmentCents: plan.instalmentCents, count: plan.count, firstDueDate: plan.firstDueDate, lastDueDate: plan.lastDueDate, roundingCents: plan.roundingCents, remainingCents: plan.remainingCents } };
+  pushEvent(
+    loan,
+    "mandate.amendment_requested",
+    `Restructure sent for authorisation: ${aud(plan.remainingCents)} remaining re-cut into ${plan.count} × ${aud(plan.instalmentCents)} fortnightly, ${shortDate(plan.firstDueDate)} to ${shortDate(plan.lastDueDate)}` +
+      (plan.roundingCents ? ` (+${plan.roundingCents}c rounding on the final total)` : ""),
+    "info",
+    loan.mandate.uid,
+  );
   settle(loan);
   return loan;
+}
+
+function applyRestructure(loan: Loan) {
+  const m = loan.mandate!;
+  const p = m.pendingAmendment!.plan;
+  const committed = loan.instalments.filter((i) => i.state === "settled" || IN_FLIGHT_INSTALMENT_STATES.has(i.state) || (i.state === "failed" && i.failure?.retryable));
+  const kept = committed.sort((a, b) => a.n - b.n);
+  const rebuilt: Instalment[] = Array.from({ length: p.count }, (_, k) => ({
+    n: kept.length + k + 1,
+    dueDate: addDays(p.firstDueDate, 14 * k),
+    amountCents: p.instalmentCents,
+    state: "scheduled",
+    attempts: 0,
+  }));
+  kept.forEach((i, idx) => (i.n = idx + 1));
+  loan.instalments = [...kept, ...rebuilt];
+  if (p.roundingCents) {
+    loan.adjustments ??= [];
+    loan.adjustments.push({ at: new Date().toISOString(), type: "rounding", cents: p.roundingCents, note: `Restructure rounding: ${p.count} × ${aud(p.instalmentCents)} exceeds the remaining ${aud(p.remainingCents)} by ${p.roundingCents}c` });
+  }
+  m.instalmentCents = p.instalmentCents;
+  m.lastPaymentDate = p.lastDueDate;
+  m.validityEndDate = addDays(p.lastDueDate, 14);
+  m.pendingAmendment = null;
+  m.updatedAt = new Date().toISOString();
+  pushEvent(loan, "mandate.amended", `Borrower authorised the amendment: ${p.count} instalments of ${aud(p.instalmentCents)} from ${shortDate(p.firstDueDate)}; total obligation ${aud(obligationCents(loan))}`, "success", m.uid);
 }
 
 export async function cancelMandate(loanId: string, reason: CancellationReason, narrative: string): Promise<Loan> {
@@ -405,14 +647,15 @@ export async function cancelMandate(loanId: string, reason: CancellationReason, 
   if (!loan?.mandate) throw new Error("No PayTo agreement on this loan");
   const z = getZepto();
   await withApiContext(`${loan.id} · cancel agreement`, () => z.cancelAgreement(loan.mandate!.uid, reason, narrative));
-  pushEvent(loan, "mandate.cancellation_requested", `Cancellation requested (${reason}): ${narrative}`, "warning", loan.mandate.uid);
+  const owed = outstandingCents(loan);
+  pushEvent(loan, "mandate.cancellation_requested", `Cancellation requested (${reason}): ${narrative}${owed > 0 ? ` — ${aud(owed)} remains owing; only the repayment authority is cancelled` : ""}`, "warning", loan.mandate.uid);
   return refreshLoan(loanId);
 }
 
 // ---------------------------------------------------------------------------
-// Refresh: pull the latest state of everything in flight. Brolga polls rather
-// than relying on webhooks so the demo needs no public URL; the same code path
-// would be driven by webhook events in production.
+// Refresh: pull the latest state of everything that can still change. Brolga
+// polls rather than relying on webhooks so the demo needs no public URL; the
+// same code path would be driven by webhook events in production.
 // ---------------------------------------------------------------------------
 export async function refreshLoan(loanId: string): Promise<Loan> {
   const loan = getLoan(loanId);
@@ -438,48 +681,50 @@ export async function refreshLoan(loanId: string): Promise<Loan> {
             pushEvent(loan, "disbursement.debit_cleared", `Debit ${d.payoutRef} cleared from ${LENDER_NAME}'s account — waiting for ${borrower.name}'s bank to confirm the credit`, "info", d.payoutRef);
           } else if (payout.status === "returned" || payout.status === "rejected" || payout.status === "voided") {
             d.failure = payout.reversal_details?.source_credit_failure ?? d.failure ?? null;
+            d.failedAt = d.updatedAt;
             pushEvent(loan, "disbursement.failed", `Payout ${payout.status}${d.failure ? `: ${d.failure.code} ${d.failure.title}` : ""}`, "error", d.payoutRef);
           } else {
             pushEvent(loan, "disbursement.status", `Payout ${d.payoutRef}: ${prev} → ${payout.status}`, "info", d.payoutRef);
           }
         }
       }
-      // Credit side (money arriving in the borrower's account). Only visible with
-      // both_parties=true; a returned credit is followed by a payout_reversal.
-      if (disbursementSettled(d) === "pending") {
-        const tx = await z.transactions({ parent_ref: d.paymentRef, both_parties: "true" });
-        const credit = tx.find((t) => t.type === "credit" && t.category === "payout");
-        const reversal = tx.find((t) => t.type === "credit" && t.category === "payout_reversal");
-        if (credit) {
-          if (credit.ref !== d.creditRef) d.creditRef = credit.ref;
-          if (credit.status !== d.creditStatus) {
-            const prev = d.creditStatus;
-            d.creditStatus = credit.status;
-            d.updatedAt = new Date().toISOString();
-            if (credit.status === "cleared") {
-              d.clearedAt = credit.cleared_at ?? d.updatedAt;
-              pushEvent(loan, "disbursement.cleared", `Funds cleared to ${borrower.name}'s ${borrower.bankName ?? "bank"} account (credit ${credit.ref})`, "success", credit.ref);
-            } else if (credit.status === "returned" || credit.status === "rejected") {
-              d.failure = credit.failure ?? reversal?.reversal_details?.source_credit_failure ?? null;
-              pushEvent(loan, "disbursement.failed", `${borrower.name}'s bank returned the payment${d.failure ? `: ${d.failure.code} ${d.failure.title}` : ""}${credit.failure_details ? ` (${credit.failure_details})` : ""}. Zepto will reverse the funds to ${LENDER_NAME}.`, "error", credit.ref);
-            } else if (prev) {
-              pushEvent(loan, "disbursement.credit_status", `Credit ${credit.ref}: ${prev} → ${credit.status}`, "info", credit.ref);
-            }
+    }
+    // Credit side (money arriving in the borrower's account) and, after a failure,
+    // the reversal back to Brolga. Both are only visible with both_parties=true.
+    const watchReversal = d && disbursementSettled(d) === "failed" && !d.reversalRef && Date.now() - Date.parse(d.failedAt ?? d.updatedAt) < REVERSAL_WATCH_MS;
+    if (d && (disbursementSettled(d) === "pending" || watchReversal)) {
+      const tx = await z.transactions({ parent_ref: d.paymentRef, both_parties: "true" });
+      const credit = tx.find((t) => t.type === "credit" && t.category === "payout");
+      const reversal = tx.find((t) => t.type === "credit" && t.category === "payout_reversal");
+      if (credit) {
+        if (credit.ref !== d.creditRef) d.creditRef = credit.ref;
+        if (credit.status !== d.creditStatus) {
+          const prev = d.creditStatus;
+          d.creditStatus = credit.status;
+          d.updatedAt = new Date().toISOString();
+          if (credit.status === "cleared") {
+            d.clearedAt = credit.cleared_at ?? d.updatedAt;
+            pushEvent(loan, "disbursement.cleared", `Funds cleared to ${borrower.name}'s ${borrower.bankName ?? "bank"} account (credit ${credit.ref})`, "success", credit.ref);
+          } else if (credit.status === "returned" || credit.status === "rejected") {
+            d.failure = credit.failure ?? reversal?.reversal_details?.source_credit_failure ?? null;
+            d.failedAt = d.updatedAt;
+            pushEvent(loan, "disbursement.failed", `${borrower.name}'s bank returned the payment${d.failure ? `: ${d.failure.code} ${d.failure.title}` : ""}${credit.failure_details ? ` (${credit.failure_details})` : ""}. Zepto will reverse the funds to ${LENDER_NAME}.`, "error", credit.ref);
+          } else if (prev) {
+            pushEvent(loan, "disbursement.credit_status", `Credit ${credit.ref}: ${prev} → ${credit.status}`, "info", credit.ref);
           }
         }
-        if (reversal && reversal.ref !== d.reversalRef) {
-          d.reversalRef = reversal.ref;
-          pushEvent(loan, "disbursement.reversed", `Reversal ${reversal.ref} (${aud(reversal.amount)}) ${reversal.status} back to ${LENDER_NAME}`, "warning", reversal.ref);
-        }
+      }
+      if (reversal && reversal.ref !== d.reversalRef) {
+        d.reversalRef = reversal.ref;
+        if (!d.failure && reversal.reversal_details?.source_credit_failure) d.failure = reversal.reversal_details.source_credit_failure;
+        pushEvent(loan, "disbursement.reversed", `Reversal ${reversal.ref} (${aud(reversal.amount)}) ${reversal.status} back to ${LENDER_NAME}`, "warning", reversal.ref);
       }
     }
 
     const m = loan.mandate;
     if (m && !["declined", "expired", "failed", "cancelled"].includes(m.state)) {
       const a = await z.getAgreement(m.uid);
-      const changed = a.state !== m.state;
-      const amendmentResolved = m.pendingAmendment && a.payment_terms.amount !== undefined && a.payment_terms.amount !== m.instalmentCents;
-      if (changed) {
+      if (a.state !== m.state) {
         const prev = m.state;
         m.state = a.state;
         m.stateReason = a.state_reason ?? null;
@@ -490,39 +735,59 @@ export async function refreshLoan(loanId: string): Promise<Loan> {
         const who = a.state_caused_by === "debtor" ? "by the borrower" : a.state_caused_by === "initiator" ? `by ${LENDER_NAME}` : "by Zepto";
         pushEvent(loan, `mandate.${a.state}`, `PayTo agreement ${prev} → ${a.state} ${who}${a.state_reason ? ` (${a.state_reason.code} ${a.state_reason.title})` : ""}${a.mms_agreement_id && a.state === "active" ? ` · MMS id ${a.mms_agreement_id}` : ""}`, level, m.uid);
       }
-      if (amendmentResolved) {
-        const newAmt = a.payment_terms.amount!;
-        pushEvent(loan, "mandate.amended", `Borrower authorised the amendment: instalment now ${aud(newAmt)}`, "success", m.uid);
-        m.instalmentCents = newAmt;
-        m.pendingAmendment = null;
-        for (const i of loan.instalments) if (i.state === "scheduled" || i.state === "failed") i.amountCents = newAmt;
-      } else if (m.pendingAmendment && Date.now() - Date.parse(m.pendingAmendment.requestedAt) > 20_000) {
-        // Look at history to see whether it was declined/expired.
+      if (m.pendingAmendment) {
+        // The agreement's own history is the source of truth for how the
+        // amendment ended — an unchanged amount still gets an "amended" event.
+        const since = Date.parse(m.pendingAmendment.requestedAt) - 1000;
         const hist = await z.agreementHistory(m.uid);
-        const after = hist.filter((h) => Date.parse(h.published_at) >= Date.parse(m.pendingAmendment!.requestedAt) - 1000);
+        const after = hist.filter((h) => Date.parse(h.published_at) >= since);
+        const done = after.find((h) => /payto_agreement\.amended$/.test(h.type));
         const bad = after.find((h) => /amendment_(declined|expired|failed|recalled)/.test(h.type));
-        if (bad) {
-          pushEvent(loan, "mandate.amendment_failed", `Amendment ${bad.type.replace("payto_agreement.", "").replace("_", " ")} — instalment stays at ${aud(m.instalmentCents)}`, "warning", m.uid);
+        if (done) applyRestructure(loan);
+        else if (bad) {
+          pushEvent(loan, "mandate.amendment_failed", `Amendment ${bad.type.replace("payto_agreement.", "").replace("_", " ")} — schedule unchanged, instalment stays at ${aud(m.instalmentCents)}`, "warning", m.uid);
           m.pendingAmendment = null;
+        } else if (a.payment_terms.amount !== undefined && a.payment_terms.amount === m.pendingAmendment.plan.instalmentCents && a.payment_terms.amount !== m.instalmentCents) {
+          // History unavailable but the terms already show the new amount.
+          applyRestructure(loan);
         }
       }
     }
 
     for (const inst of loan.instalments) {
-      if (inst.paymentUid && !FINAL_INSTALMENT_STATES.has(inst.state)) {
-        const p = await z.getPaytoPayment(inst.paymentUid);
-        if (p.state !== inst.state) {
-          inst.state = p.state;
-          inst.failure = p.failure ?? null;
-          inst.updatedAt = new Date().toISOString();
-          if (p.state === "settled") pushEvent(loan, "instalment.settled", `Instalment ${inst.n} settled — ${aud(inst.amountCents)} received in real time`, "success", p.uid);
-          else if (p.state === "failed") pushEvent(loan, "instalment.failed", `Instalment ${inst.n} failed: ${p.failure?.code} ${p.failure?.title}${p.failure?.retryable ? " (retryable)" : " (not retryable)"}`, "error", p.uid);
-          else if (p.state === "under_investigation") pushEvent(loan, "instalment.investigation", `Instalment ${inst.n} is under investigation by the borrower's bank`, "warning", p.uid);
+      if (!inst.paymentUid || FINAL_INSTALMENT_STATES.has(inst.state)) continue;
+      if (inst.state === "unknown") {
+        // An intent with no answer: find out whether it exists.
+        try {
+          const p = await z.getPaytoPayment(inst.paymentUid);
+          await adoptPayment(loan, inst, p, `Instalment ${inst.n}: recovered payment ${p.uid} (${p.state}) after a lost response`);
+        } catch (err) {
+          if (err instanceof ZeptoError && err.status === 404) {
+            pushEvent(loan, "instalment.intent_void", `Instalment ${inst.n}: Zepto has no record of ${inst.paymentUid}; the intent is cleared and the instalment reopened`, "warning", inst.paymentUid);
+            inst.paymentUid = undefined;
+            inst.state = "scheduled";
+          } else throw err;
         }
+        continue;
+      }
+      const p = await z.getPaytoPayment(inst.paymentUid);
+      if (p.state !== inst.state) {
+        inst.state = p.state;
+        inst.failure = p.failure ?? null;
+        inst.updatedAt = new Date().toISOString();
+        if (p.state === "settled") pushEvent(loan, "instalment.settled", `Instalment ${inst.n} settled — ${aud(p.amount)} received in real time`, "success", p.uid);
+        else if (p.state === "failed") pushEvent(loan, "instalment.failed", `Instalment ${inst.n} failed: ${p.failure?.code} ${p.failure?.title}${p.failure?.retryable ? " (retryable)" : " (not retryable)"}`, "error", p.uid);
+        else if (p.state === "under_investigation") pushEvent(loan, "instalment.investigation", `Instalment ${inst.n} is under investigation by the borrower's bank`, "warning", p.uid);
+      }
+      if (p.state === "settled" && p.amount !== inst.amountCents) {
+        // The provider's amount is the truth; the schedule follows it.
+        pushEvent(loan, "instalment.amount_corrected", `Instalment ${inst.n} booked at ${aud(p.amount)} (the payment's amount), not the scheduled ${aud(inst.amountCents)}`, "warning", p.uid);
+        inst.amountCents = p.amount;
       }
     }
   });
 
+  loan.lastRefreshedAt = new Date().toISOString();
   settle(loan);
   return loan;
 }
@@ -530,17 +795,25 @@ export async function refreshLoan(loanId: string): Promise<Loan> {
 export function hasInFlight(loan: Loan): boolean {
   const d = loan.disbursement;
   if (d && disbursementSettled(d) === "pending") return true;
+  if (d && disbursementSettled(d) === "failed" && !d.reversalRef && Date.now() - Date.parse(d.failedAt ?? d.updatedAt) < REVERSAL_WATCH_MS) return true;
+  if (loan.disbursementIntent?.outcome === "unknown") return true;
   const m = loan.mandate;
   if (m && (m.state === "pending" || m.state === "created" || m.pendingAmendment)) return true;
-  return loan.instalments.some((i) => i.paymentUid && !FINAL_INSTALMENT_STATES.has(i.state));
+  return loan.instalments.some((i) => i.paymentUid && IN_FLIGHT_INSTALMENT_STATES.has(i.state));
 }
 
-export function nextCollectable(loan: Loan): { instalment: Instalment; reason?: string } | { instalment: null; reason: string } {
-  if (!loan.mandate || loan.mandate.state !== "active") return { instalment: null, reason: "PayTo agreement is not active" };
-  const next = loan.instalments.find((i) => i.state === "scheduled" || i.state === "failed");
-  if (!next) return { instalment: null, reason: "All instalments settled" };
-  const today = sydneyDate();
-  if (next.state === "failed") return { instalment: next };
-  if (next.dueDate > today) return { instalment: next, reason: `Agreement permits one payment per fortnight; instalment ${next.n} opens on ${shortDate(next.dueDate)}` };
-  return { instalment: next };
+/** Refresh every loan that can still change, skipping ones polled very recently. */
+export async function refreshInFlight(maxAgeMs = 3000, limit = 10): Promise<number> {
+  const db = loadDb();
+  const due = db.loans.filter((l) => hasInFlight(l) && (!l.lastRefreshedAt || Date.now() - Date.parse(l.lastRefreshedAt) >= maxAgeMs)).slice(0, limit);
+  for (const l of due) {
+    try {
+      await refreshLoan(l.id);
+    } catch (err) {
+      pushEvent(l, "refresh.failed", `Refresh failed: ${(err as Error).message}`, "error");
+      l.lastRefreshedAt = new Date().toISOString();
+      saveDb();
+    }
+  }
+  return due.length;
 }

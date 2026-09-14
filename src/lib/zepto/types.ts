@@ -349,6 +349,9 @@ export class ZeptoError extends Error {
   requiredScope?: string;
   requestId?: string;
   path: string;
+  /** Extra data Zepto attaches to some errors — e.g. `resource_ref` on a 409 idempotency replay. */
+  meta?: Record<string, unknown>;
+  retryAfterSeconds?: number;
   constructor(args: {
     status: number;
     code?: string;
@@ -357,6 +360,8 @@ export class ZeptoError extends Error {
     requiredScope?: string;
     requestId?: string;
     path: string;
+    meta?: Record<string, unknown>;
+    retryAfterSeconds?: number;
   }) {
     super(`${args.status} ${args.title}: ${args.detail}`);
     this.name = "ZeptoError";
@@ -367,6 +372,12 @@ export class ZeptoError extends Error {
     this.requiredScope = args.requiredScope;
     this.requestId = args.requestId;
     this.path = args.path;
+    this.meta = args.meta;
+    this.retryAfterSeconds = args.retryAfterSeconds;
+  }
+  /** True when we cannot know whether Zepto acted on the request (no response, or a 5xx). */
+  get outcomeUnknown(): boolean {
+    return this.status === 0 || this.status >= 500;
   }
   toJSON() {
     return {
@@ -377,6 +388,8 @@ export class ZeptoError extends Error {
       requiredScope: this.requiredScope,
       requestId: this.requestId,
       path: this.path,
+      meta: this.meta,
+      retryAfterSeconds: this.retryAfterSeconds,
     };
   }
 }

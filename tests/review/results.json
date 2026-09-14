@@ -1,0 +1,585 @@
+{
+  "assessment": "Brolga offline invariant suite (review harness v2)",
+  "executedAt": "2026-09-14T05:04:10.646Z",
+  "runtime": "v24.19.0",
+  "sourceCodeModified": false,
+  "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
+  "network": {
+    "mode": "mock",
+    "credentialUsed": false,
+    "blockedRealFetchAttempts": 0,
+    "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
+  },
+  "total": 45,
+  "passed": 45,
+  "failed": 0,
+  "results": [
+    {
+      "id": "T01",
+      "name": "Valid quote and fortnightly schedule",
+      "expectation": "A $600 loan over four fortnights totals $624 in four $156 instalments.",
+      "result": "PASS",
+      "observations": {
+        "principal": 60000,
+        "fee": 2400,
+        "scheduledTotal": 62400,
+        "dates": [
+          "2026-09-12",
+          "2026-09-26",
+          "2026-10-10",
+          "2026-10-24"
+        ]
+      }
+    },
+    {
+      "id": "T02",
+      "name": "Insufficient funds, then retry",
+      "expectation": "A retryable failed payment settles using the same payment UID.",
+      "result": "PASS",
+      "observations": {
+        "status": "active",
+        "paymentUidUnchanged": true,
+        "attempts": 2
+      }
+    },
+    {
+      "id": "T03",
+      "name": "Non-retryable collection",
+      "expectation": "Account-closed failure is not accepted by retryInstalment.",
+      "result": "PASS",
+      "observations": {
+        "failureCode": "AC04",
+        "retryable": false
+      }
+    },
+    {
+      "id": "T04",
+      "name": "Borrower controls their suspension",
+      "expectation": "Initiator reactivation is refused until the borrower reactivates.",
+      "result": "PASS",
+      "observations": {
+        "mandateState": "active",
+        "causedBy": "debtor"
+      }
+    },
+    {
+      "id": "T05",
+      "name": "Initiator hardship pause and resume",
+      "expectation": "New collection is blocked while suspended; initiator can resume its own pause.",
+      "result": "PASS",
+      "observations": {
+        "status": "active"
+      }
+    },
+    {
+      "id": "T06",
+      "name": "Declined agreement can be reissued",
+      "expectation": "A declined agreement can be replaced with a distinct UID.",
+      "result": "PASS",
+      "observations": {
+        "mandateState": "active",
+        "distinctUid": true
+      }
+    },
+    {
+      "id": "T07",
+      "name": "Credit-side disbursement truth",
+      "expectation": "Cleared debit alone is pending, and returned borrower credit is failure.",
+      "result": "PASS",
+      "observations": {
+        "debitOnly": "pending",
+        "bothCleared": "cleared",
+        "returnedCredit": "failed"
+      }
+    },
+    {
+      "id": "T08",
+      "name": "Returned Direct Entry payout",
+      "expectation": "A returned credit produces disbursement_failed even though the debit cleared.",
+      "result": "PASS",
+      "observations": {
+        "status": "disbursement_failed",
+        "debitStatus": "cleared",
+        "creditStatus": "returned",
+        "code": "E105"
+      }
+    },
+    {
+      "id": "T09",
+      "name": "Collection before disbursement clears",
+      "expectation": "The collection route must reject repayment before funds clear to the borrower.",
+      "result": "PASS",
+      "observations": {
+        "httpStatus": 400,
+        "disbursement": "pending",
+        "loanStatus": "disbursing",
+        "instalmentState": "scheduled",
+        "uiOffersCollection": false
+      }
+    },
+    {
+      "id": "T10",
+      "name": "Collection after disbursement failure",
+      "expectation": "A failed disbursement must block repayment even if its mandate is active.",
+      "result": "PASS",
+      "observations": {
+        "httpStatus": 400,
+        "loanStatus": "disbursement_failed",
+        "collectionOffered": false,
+        "instalmentState": "scheduled"
+      }
+    },
+    {
+      "id": "T11",
+      "name": "Restructure reconciles the debt",
+      "expectation": "Completing the amended schedule must not close a loan with an unexplained outstanding balance.",
+      "result": "PASS",
+      "observations": {
+        "originalDebtCents": 62400,
+        "amendedScheduleTotal": 62400,
+        "collectedCents": 43680,
+        "outstandingCents": 18720,
+        "status": "active",
+        "mandateState": "active"
+      }
+    },
+    {
+      "id": "T12",
+      "name": "Amendment after a failed payment",
+      "expectation": "The amount credited by Brolga must match the amount on the retried payment.",
+      "result": "PASS",
+      "observations": {
+        "providerMockSettledAmount": 15600,
+        "appCreditedAmount": 15600,
+        "state": "settled"
+      }
+    },
+    {
+      "id": "T13",
+      "name": "Unknown collection response and later retry",
+      "expectation": "A lost response must preserve the original intent and avoid a second payment for the same instalment.",
+      "result": "PASS",
+      "observations": {
+        "uidSavedAfterLoss": "brolga-qmq5c-ln-0001-inst-1-1",
+        "providerPaymentCount": 1,
+        "providerUids": [
+          "brolga-qmq5c-ln-0001-inst-1-1"
+        ],
+        "locallyTrackedUid": "brolga-qmq5c-ln-0001-inst-1-1",
+        "localAttempts": 1
+      }
+    },
+    {
+      "id": "T14",
+      "name": "Unknown disbursement retry after a return",
+      "expectation": "A retry after a lost response must reuse the accepted retry intent.",
+      "result": "PASS",
+      "observations": {
+        "retryKeys": [
+          "brolga-qmqx4-ln-0001-disburse-2",
+          "brolga-qmqx4-ln-0001-disburse-2"
+        ],
+        "distinctRetryIntents": 1
+      }
+    },
+    {
+      "id": "T15",
+      "name": "Delayed payout reversal remains tracked",
+      "expectation": "A reversal arriving after the returned credit must attach to the failed loan.",
+      "result": "PASS",
+      "observations": {
+        "reversalExistsInProviderMock": true,
+        "localReversalRef": "C.2ur",
+        "inFlight": false
+      }
+    },
+    {
+      "id": "T16",
+      "name": "Overview polling advances pending loans",
+      "expectation": "Polling the overview loan route after settlement should provide fresh status.",
+      "result": "PASS",
+      "observations": {
+        "overviewStatus": "disbursed",
+        "statusAfterDetailRefresh": "disbursed",
+        "providerCallsByOverview": 2
+      }
+    },
+    {
+      "id": "T17",
+      "name": "Operations includes returned borrower credits",
+      "expectation": "The payout ledger should show the recipient-side return described in the briefing.",
+      "result": "PASS",
+      "observations": {
+        "operationsRows": [
+          {
+            "type": "credit",
+            "category": "payout_reversal",
+            "status": "cleared"
+          },
+          {
+            "type": "credit",
+            "category": "payout",
+            "status": "returned"
+          },
+          {
+            "type": "debit",
+            "category": "payout",
+            "status": "cleared"
+          }
+        ]
+      }
+    },
+    {
+      "id": "T18",
+      "name": "Non-numeric principal validation",
+      "expectation": "Invalid monetary or term input must return 4xx without creating a loan.",
+      "result": "PASS",
+      "observations": {
+        "httpStatus": 400,
+        "loanCount": 0
+      }
+    },
+    {
+      "id": "T19",
+      "name": "Missing loan term validation",
+      "expectation": "Invalid monetary or term input must return 4xx without creating a loan.",
+      "result": "PASS",
+      "observations": {
+        "httpStatus": 400,
+        "loanCount": 0
+      }
+    },
+    {
+      "id": "T20",
+      "name": "Fractional loan term validation",
+      "expectation": "Invalid monetary or term input must return 4xx without creating a loan.",
+      "result": "PASS",
+      "observations": {
+        "httpStatus": 400,
+        "loanCount": 0
+      }
+    },
+    {
+      "id": "T21",
+      "name": "Same-amount amendment resolves",
+      "expectation": "An accepted unchanged amount must not leave the loan stuck in pending amendment.",
+      "result": "PASS",
+      "observations": {
+        "providerHistory": [
+          "payto_agreement.amended",
+          "payto_agreement.amendment_requested",
+          "payto_agreement.activated",
+          "payto_agreement.created"
+        ],
+        "stillPending": false,
+        "inFlight": false
+      }
+    },
+    {
+      "id": "T22",
+      "name": "Reissued mandate does not leave a sticky cancelled loan",
+      "expectation": "A live replacement mandate should not coexist with an irreversibly cancelled loan state.",
+      "result": "PASS",
+      "observations": {
+        "loanStatus": "active",
+        "mandateState": "active",
+        "repaymentOffered": true,
+        "debtCents": 62400
+      }
+    },
+    {
+      "id": "T23",
+      "name": "Health probe treats authentication failure as unavailable",
+      "expectation": "A 401 must not display a green capability result.",
+      "result": "PASS",
+      "observations": {
+        "probe": {
+          "name": "PayTo agreements",
+          "scope": "pay_to_agreements",
+          "ok": false,
+          "note": "GET /payto/payments — refused (401: Synthetic probe denial)"
+        }
+      }
+    },
+    {
+      "id": "T24",
+      "name": "CoP no-match is not verified and cannot be paid without a recorded override",
+      "expectation": "Product decision (12 Sep 2026): a no-match borrower yields a draft loan on hold; disbursement is refused until a named override with a reason is recorded, and the override is written to the timeline.",
+      "result": "PASS",
+      "observations": {
+        "cop": "no_match",
+        "initialLoanStatus": "draft",
+        "copHold": false,
+        "overrideRecorded": true,
+        "payoutAfterOverride": true,
+        "overrideEvent": true
+      }
+    },
+    {
+      "id": "T25",
+      "name": "Generic CoP 403 does not invent enablement cause",
+      "expectation": "An unexplained 403 should preserve uncertainty about its cause.",
+      "result": "PASS",
+      "observations": {
+        "userFacingError": "Zepto refused the Confirmation of Payee request (403: Synthetic unrelated account policy denial). Recorded as unavailable; the cause is unconfirmed — account-level access to Zepto Validate is the usual reason on a sandbox."
+      }
+    },
+    {
+      "id": "T26",
+      "name": "Authorization header is omitted from normal logs",
+      "expectation": "The normal authorization token is sent only to the stub and absent from app logs.",
+      "result": "PASS",
+      "observations": {
+        "authorizationReachedStub": true,
+        "tokenInConsole": false
+      }
+    },
+    {
+      "id": "T27",
+      "name": "Payload log sanitization",
+      "expectation": "Sensitive values in a provider response must be sanitized before appearing in the console.",
+      "result": "PASS",
+      "observations": {
+        "syntheticSecretInConsole": false,
+        "syntheticAccountInConsole": false,
+        "realCredentialUsed": false
+      }
+    },
+    {
+      "id": "T28",
+      "name": "Client maps payout idempotency and API version",
+      "expectation": "The client uses the correct configured headers and removes the internal idempotency field from the JSON body.",
+      "result": "PASS",
+      "observations": {
+        "headersCorrect": true,
+        "idempotencyFieldRemovedFromBody": true
+      }
+    },
+    {
+      "id": "T29",
+      "name": "Client normalizes legacy and structured errors",
+      "expectation": "Both supplied error formats and the supported scope-header pattern preserve useful diagnostics.",
+      "result": "PASS",
+      "observations": {
+        "errorFormats": [
+          "legacy string",
+          "structured array",
+          "supported scope header"
+        ]
+      }
+    },
+    {
+      "id": "T30",
+      "name": "Mock state survives a process restart",
+      "expectation": "A saved mock loan should remain refreshable after starting a fresh process.",
+      "result": "PASS",
+      "observations": {
+        "localLoanExists": true,
+        "refreshed": true,
+        "blockedNetworkAttempts": 0
+      }
+    },
+    {
+      "id": "T31",
+      "name": "Corrupt store is preserved for recovery",
+      "expectation": "An unreadable store must not be silently overwritten with an empty one.",
+      "result": "PASS",
+      "observations": {
+        "originalFilePreserved": true,
+        "loans": 0,
+        "blockedNetworkAttempts": 0
+      }
+    },
+    {
+      "id": "T32",
+      "name": "Mock implements payout idempotency",
+      "expectation": "Replaying an identical payout key must not create another batch; a recoverable conflict may identify the original.",
+      "result": "PASS",
+      "observations": {
+        "firstBatch": "PB.2v",
+        "conflictStatus": 409,
+        "sameKey": "brolga-qn4t4-ln-0001-disburse-1"
+      }
+    },
+    {
+      "id": "T33",
+      "name": "Rejected amendment leaves original schedule",
+      "expectation": "A declined amendment clears pending state and keeps original amounts.",
+      "result": "PASS",
+      "observations": {
+        "pending": false,
+        "instalmentCents": 15600
+      }
+    },
+    {
+      "id": "T34",
+      "name": "Collection under investigation is not settled",
+      "expectation": "Unresolved investigation remains in flight and is not booked as money received.",
+      "result": "PASS",
+      "observations": {
+        "state": "under_investigation",
+        "inFlight": true,
+        "creditedCents": 0
+      }
+    },
+    {
+      "id": "T35",
+      "name": "Collection does not switch silently out of mock mode",
+      "expectation": "All domain tests use mock mode with no token and no attempted fetch.",
+      "result": "PASS",
+      "observations": {
+        "configuredMode": "mock",
+        "tokenPresent": false,
+        "blockedNetworkAttempts": 0
+      }
+    },
+    {
+      "id": "T36",
+      "name": "Idempotency conflict preserves recovery reference",
+      "expectation": "The documented 409 meta.resource_ref must remain available for recovering an already-created payment.",
+      "result": "PASS",
+      "observations": {
+        "errorStatus": 409,
+        "recoveryReferencePreserved": true,
+        "referenceOnlyInRawLogSnippet": true
+      }
+    },
+    {
+      "id": "T37",
+      "name": "Restructure keeps the schedule equal to the obligation",
+      "expectation": "After a settled instalment and a lower requested amount, remaining instalments plus settled money equal the recorded obligation, and the loan only closes when everything is settled.",
+      "result": "PASS",
+      "observations": {
+        "obligation": 62400,
+        "scheduleTotal": 62400,
+        "instalments": [
+          [
+            1,
+            15600,
+            "settled"
+          ],
+          [
+            2,
+            9360,
+            "scheduled"
+          ],
+          [
+            3,
+            9360,
+            "scheduled"
+          ],
+          [
+            4,
+            9360,
+            "scheduled"
+          ],
+          [
+            5,
+            9360,
+            "scheduled"
+          ],
+          [
+            6,
+            9360,
+            "scheduled"
+          ]
+        ],
+        "mandateAmount": 9360,
+        "lastPaymentDate": "2026-11-21",
+        "finalStatus": "closed",
+        "outstanding": 0
+      }
+    },
+    {
+      "id": "T38",
+      "name": "Restructure rounding is recorded as an adjustment",
+      "expectation": "When the remaining debt does not divide evenly, the cents of rounding are written as an adjustment rather than silently added or forgiven.",
+      "result": "PASS",
+      "observations": {
+        "remaining": 46800,
+        "obligation": 62400,
+        "scheduleTotal": 62400
+      }
+    },
+    {
+      "id": "T39",
+      "name": "Lost disbursement response is recovered through the idempotency conflict",
+      "expectation": "A retry after a lost answer replays the same key, receives 409 with the original ref, and adopts it instead of paying twice.",
+      "result": "PASS",
+      "observations": {
+        "paymentRef": "PB.2v",
+        "batchesInProvider": 1,
+        "recovered": true,
+        "intentCleared": true
+      }
+    },
+    {
+      "id": "T40",
+      "name": "Mock enforces the sandbox daily PayTo limit",
+      "expectation": "A collection that would exceed $1,000 in a day is refused with ZPPAY01, as the sandbox does.",
+      "result": "PASS",
+      "observations": {
+        "instalmentCents": 104000,
+        "code": "ZPPAY01",
+        "state": "scheduled",
+        "paymentUid": null
+      }
+    },
+    {
+      "id": "T41",
+      "name": "Console masks account identifiers as well as secrets",
+      "expectation": "Account numbers in logged payloads are masked to their last three digits.",
+      "result": "PASS",
+      "observations": {
+        "secretPresent": false,
+        "fullAccountPresent": false,
+        "maskedPresent": true
+      }
+    },
+    {
+      "id": "T42",
+      "name": "An unreadable active store is preserved and writes are refused",
+      "expectation": "The active mode store is never overwritten when it cannot be parsed; the app reports it and refuses to write.",
+      "result": "PASS",
+      "observations": {
+        "readable": false,
+        "error": "data\\brolga.mock.json is unreadable (Expected ',' or ']' after array element in JSON at position 28 (line 1 column 29)). It has been left untouched; move it aside to start fresh.",
+        "writeRefused": true,
+        "loans": 0,
+        "filePreserved": true
+      }
+    },
+    {
+      "id": "T43",
+      "name": "Collection waits while an amendment is pending",
+      "expectation": "No money is pulled while the borrower is deciding on a restructure.",
+      "result": "PASS",
+      "observations": {
+        "ok": false,
+        "reason": "An amendment is awaiting the borrower's authorisation",
+        "waiting": true
+      }
+    },
+    {
+      "id": "T44",
+      "name": "Refresh failures surface next to retained data",
+      "expectation": "When the provider errors during refresh, the loan route still returns the last known loan and names the error.",
+      "result": "PASS",
+      "observations": {
+        "httpStatus": 200,
+        "refreshError": "503 Service unavailable: Synthetic outage",
+        "loanReturned": true
+      }
+    },
+    {
+      "id": "T45",
+      "name": "Cancelled mandate with a balance is not \"repaid\"",
+      "expectation": "Cancelling repayment authority with money owing leaves the loan cancelled, not closed; paying the balance later closes it.",
+      "result": "PASS",
+      "observations": {
+        "status": "cancelled",
+        "outstanding": 46800
+      }
+    }
+  ]
+}

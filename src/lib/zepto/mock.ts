@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { appendApiLog } from "../db";
 import { currentApiContext } from "./context";
 import {
@@ -49,10 +51,30 @@ type MockState = {
   payments: (Omit<PaymentBatch, "payouts"> & { payouts: MockPayout[]; createdAt: number })[];
   agreements: MockAgreement[];
   paytoPayments: MockPaytoPayment[];
+  idempotency: Record<string, string>; // Idempotency-Key → PB ref, as the real API keeps for 24h
   seq: number;
 };
 
 const g = globalThis as unknown as { __brolgaMock?: MockState };
+
+// The mock provider's own "database". It is persisted next to the app's store so
+// that a restart (or a rehearsed fallback) finds the same agreements and payments
+// the app's loans refer to — a mock that forgets its objects would 404 on every
+// refresh after a restart.
+const MOCK_FILE = () => path.join(process.cwd(), "data", "mock-provider.json");
+
+function persist(): void {
+  const s = g.__brolgaMock;
+  if (!s) return;
+  try {
+    fs.mkdirSync(path.dirname(MOCK_FILE()), { recursive: true });
+    const tmp = MOCK_FILE() + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(s));
+    fs.renameSync(tmp, MOCK_FILE());
+  } catch {
+    /* best effort — an unwritable directory should not break a mock call */
+  }
+}
 
 function bankNameFor(bsb: string): string {
   const p = bsb.slice(0, 2);
@@ -94,16 +116,35 @@ function initialState(): MockState {
       available_balance: 2_500_000,
     });
   }
-  return { bankAccounts, contacts: [], payments: [], agreements: [], paytoPayments: [], seq: 100 };
+  return { bankAccounts, contacts: [], payments: [], agreements: [], paytoPayments: [], idempotency: {}, seq: 100 };
 }
 
 function state(): MockState {
-  if (!g.__brolgaMock) g.__brolgaMock = initialState();
+  if (!g.__brolgaMock) {
+    try {
+      if (fs.existsSync(MOCK_FILE())) {
+        const loaded = JSON.parse(fs.readFileSync(MOCK_FILE(), "utf8")) as MockState;
+        loaded.idempotency ??= {};
+        g.__brolgaMock = loaded;
+        return loaded;
+      }
+    } catch {
+      /* unreadable mock state: start fresh — it is synthetic by definition */
+    }
+    g.__brolgaMock = initialState();
+    persist();
+  }
   return g.__brolgaMock;
 }
 
 export function resetMock(): void {
   g.__brolgaMock = initialState();
+  try {
+    fs.rmSync(MOCK_FILE(), { force: true });
+  } catch {
+    /* nothing to remove */
+  }
+  persist();
 }
 
 function ref(prefix: string): string {
@@ -217,6 +258,7 @@ export class MockZepto implements ZeptoApi {
       metadata: input.metadata,
     };
     s.contacts.push(c);
+    persist();
     log("POST", "/contacts/anyone", 201, input);
     return c;
   }
@@ -249,6 +291,12 @@ export class MockZepto implements ZeptoApi {
   async createPayment(input: CreatePaymentInput): Promise<PaymentBatch> {
     const s = state();
     const path = "/payments";
+    // Idempotent replay behaves like the documented API: 409 with the original ref.
+    if (input.idempotency_key && s.idempotency[input.idempotency_key]) {
+      const ref = s.idempotency[input.idempotency_key];
+      log("POST", path, 409, input, `Duplicate idempotency key: A resource has already been created with this idempotency key (${ref})`);
+      throw new ZeptoError({ status: 409, title: "Duplicate idempotency key", detail: "A resource has already been created with this idempotency key", path, meta: { resource_ref: ref } });
+    }
     const from = input.your_bank_account_id ? s.bankAccounts.find((b) => b.id === input.your_bank_account_id) : s.bankAccounts[0];
     if (!from) fail("POST", path, 400, "HTTP 400", "Your bank account could not be found", undefined, input);
     if (input.channels.includes("new_payments_platform") && from.account_type !== "float_account") {
@@ -259,9 +307,9 @@ export class MockZepto implements ZeptoApi {
     const payouts: MockPayout[] = input.payouts.map((po) => {
       const contact = s.contacts.find((c) => c.id === po.recipient_contact_id);
       if (!contact) fail("POST", path, 400, "HTTP 400", "Recipient contact could not be found", undefined, input);
-      const cents = po.amount % 1000; // last three digits drive sandbox-style failures ($1.05 → 105)
-      const de = DE_FAILURES[cents];
-      const npp = NPP_FAILURES[cents];
+      // The sandbox triggers on the exact amount ($1.05 = 105 cents), not on the cents suffix.
+      const de = DE_FAILURES[po.amount];
+      const npp = NPP_FAILURES[po.amount];
       const nppFirst = input.channels[0] === "new_payments_platform";
       // Sandbox rules: $3.xx fails NPP; $1.xx fails DE. On an NPP-first float with
       // channel switching, a $1.xx amount fails NPP (E303), switches to DE, then
@@ -296,6 +344,8 @@ export class MockZepto implements ZeptoApi {
     }
     const batch = { ref: ref("PB"), channels: input.channels, your_bank_account_id: from.id, metadata: input.metadata, payouts, createdAt };
     s.payments.push(batch);
+    if (input.idempotency_key) s.idempotency[input.idempotency_key] = batch.ref;
+    persist();
     log("POST", path, 201, input);
     return { ref: batch.ref, channels: batch.channels, your_bank_account_id: batch.your_bank_account_id, metadata: batch.metadata, payouts: payouts.map((p) => payoutView(p, createdAt)) };
   }
@@ -452,6 +502,7 @@ export class MockZepto implements ZeptoApi {
       amendment: null,
     };
     s.agreements.push(a);
+    persist();
     log("POST", path, 201, input);
     return this.agreementView(a);
   }
@@ -466,7 +517,9 @@ export class MockZepto implements ZeptoApi {
   async getAgreement(uid: string): Promise<Agreement> {
     const a = this.findAgreement(uid, "GET", `/payto/agreements/${uid}`);
     log("GET", `/payto/agreements/${uid}`, 200);
-    return this.agreementView(a);
+    const view = this.agreementView(a);
+    persist();
+    return view;
   }
 
   async agreementHistory(uid: string): Promise<AgreementHistoryEvent[]> {
@@ -482,6 +535,7 @@ export class MockZepto implements ZeptoApi {
     if (a.amendment) fail("POST", path, 422, "Amendment pending", "Only one amendment can be pending at a time", "ZPAMD02", changes);
     a.amendment = { changes, resolveAt: Date.now() + delay * 1000, outcome: simulate === "debtor_accept" ? "amended" : simulate === "debtor_decline" ? "amendment_declined" : "amendment_expired" };
     a.history.push({ id: crypto.randomUUID(), type: "payto_agreement.amendment_requested", published_at: new Date().toISOString(), resource_uid: uid, body: { changes } });
+    persist();
     log("POST", path, 202, { changes, sandbox: { simulate, delay } });
   }
 
@@ -493,6 +547,7 @@ export class MockZepto implements ZeptoApi {
     a.state_caused_by = "initiator";
     a.state_reason = { code: "MD16", title: reason, detail: narrative };
     a.history.push({ id: crypto.randomUUID(), type: "payto_agreement.cancelled", published_at: new Date().toISOString(), resource_uid: uid, body: { caused_by: "initiator", reason: { code: "MD16", title: reason, detail: narrative } } });
+    persist();
     log("POST", path, 202, { reason, narrative });
   }
 
@@ -504,6 +559,7 @@ export class MockZepto implements ZeptoApi {
     a.state_caused_by = "initiator";
     a.state_reason = { code: "MD16", title: reason, detail: narrative };
     a.history.push({ id: crypto.randomUUID(), type: "payto_agreement.suspended", published_at: new Date().toISOString(), resource_uid: uid, body: { caused_by: "initiator", reason: { code: "MD16", title: reason, detail: narrative } } });
+    persist();
     log("POST", path, 202, { reason, narrative });
   }
 
@@ -516,6 +572,7 @@ export class MockZepto implements ZeptoApi {
     a.state_caused_by = "initiator";
     a.state_reason = null;
     a.history.push({ id: crypto.randomUUID(), type: "payto_agreement.reactivated", published_at: new Date().toISOString(), resource_uid: uid, body: { caused_by: "initiator" } });
+    persist();
     log("POST", path, 202, {});
   }
 
@@ -526,6 +583,7 @@ export class MockZepto implements ZeptoApi {
     if (action === "reactivation") { a.state = "active"; a.state_caused_by = "debtor"; a.state_reason = null; }
     if (action === "cancellation") { a.state = "cancelled"; a.state_caused_by = "debtor"; a.state_reason = { code: "MD16", title: "customer_requested", detail: narrative }; }
     a.history.push({ id: crypto.randomUUID(), type: `payto_agreement.${action === "cancellation" ? "cancelled" : action === "suspension" ? "suspended" : "reactivated"}`, published_at: new Date().toISOString(), resource_uid: uid, body: { caused_by: "debtor", narrative } });
+    persist();
     log("POST", path, 202, { debtor_action: action, reason: "customer_requested", narrative });
   }
 
@@ -584,10 +642,18 @@ export class MockZepto implements ZeptoApi {
     if (priorSettledOrPending.length === 0 && terms.first_payment_date && today !== terms.first_payment_date) {
       fail("POST", path, 422, "First payment date mismatch", "The payment date does not match the first payment date specified in the agreement", "ZPPAY14", input);
     }
+    if (terms.last_payment_date && today > terms.last_payment_date) {
+      fail("POST", path, 422, "Payment after last payment date", "The payment date is after the last payment date specified in the agreement", "ZPPAY13", input);
+    }
     if (terms.frequency === "fortnightly" && terms.count) {
       const periodStart = Date.now() - 14 * 86_400_000;
       const inPeriod = priorSettledOrPending.filter((p) => Date.parse(p.created_at) > periodStart).length;
       if (inPeriod >= terms.count) fail("POST", path, 422, "Maximum payments in period reached", `The agreement permits ${terms.count} payment per fortnight`, "ZPPAY17", input);
+    }
+    // The sandbox caps PayTo collections at $1,000 per (Sydney) day per account.
+    const collectedToday = s.paytoPayments.filter((x) => sydneyDate(Date.parse(x.created_at)) === today && this.paymentView(x).state !== "failed").reduce((sum, x) => sum + x.amount, 0);
+    if (collectedToday + input.amount > 100_000) {
+      fail("POST", path, 422, "Over daily limit", "This Payment would cause you to exceed your current daily limit of $1,000.00", "ZPPAY01", input);
     }
     const sim = input.simulate ?? "auto_settle";
     const delay = (input.delay ?? 2) * 1000;
@@ -608,6 +674,7 @@ export class MockZepto implements ZeptoApi {
       outcome: sim,
     };
     s.paytoPayments.push(p);
+    persist();
     log("POST", path, 201, input);
     return this.paymentView(p);
   }
@@ -616,7 +683,9 @@ export class MockZepto implements ZeptoApi {
     const p = state().paytoPayments.find((x) => x.uid === uid);
     if (!p) fail("GET", `/payto/payments/${uid}`, 404, "Not found", "Payment not found");
     log("GET", `/payto/payments/${uid}`, 200);
-    return this.paymentView(p);
+    const view = this.paymentView(p);
+    persist();
+    return view;
   }
 
   async retryPaytoPayment(uid: string, simulate: PaytoPaymentSimulate = "auto_settle", delay = 2): Promise<void> {
@@ -629,6 +698,7 @@ export class MockZepto implements ZeptoApi {
     p.failure = null;
     p.outcome = simulate;
     p.resolveAt = Date.now() + delay * 1000;
+    persist();
     log("POST", path, 202, { sandbox: { simulate, delay } });
   }
 

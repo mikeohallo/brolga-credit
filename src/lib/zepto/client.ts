@@ -33,6 +33,44 @@ export type ZeptoClientConfig = {
 
 type Envelope<T> = { data: T; links?: Record<string, string> };
 
+// ---- log sanitisation -------------------------------------------------------
+// The API console shows request and response payloads. Anything that looks like
+// a credential is redacted and account identifiers are masked before a payload is
+// written to the log, so a screen-share or an exported log never carries either.
+const SECRET_KEY = /(token|secret|password|passwd|authorization|signature|api[_-]?key|client_secret|refresh_token|access_token)/i;
+const ACCOUNT_KEY = /(account_number|bban|account_identifier|payid|alias_value)/i;
+const BBAN_RE = /\b(\d{6})-(\d{3,})(\d{3})\b/g;
+const LONG_DIGITS_RE = /\b(\d{5,})(\d{3})\b/g;
+
+function maskAccount(v: unknown): unknown {
+  if (typeof v === "string") return v.replace(BBAN_RE, (_m, bsb, mid, last) => `${bsb}-${"•".repeat(mid.length)}${last}`).replace(LONG_DIGITS_RE, (_m, mid, last) => `${"•".repeat(mid.length)}${last}`);
+  if (v && typeof v === "object") return sanitizeForLog(v);
+  return v;
+}
+
+export function sanitizeForLog(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeForLog);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SECRET_KEY.test(k)) out[k] = "[redacted]";
+      else if (ACCOUNT_KEY.test(k)) out[k] = maskAccount(v);
+      else out[k] = sanitizeForLog(v);
+    }
+    return out;
+  }
+  if (typeof value === "string") return value.replace(/Bearer\s+[A-Za-z0-9_\-.]{12,}/g, "Bearer [redacted]");
+  return value;
+}
+
+export function sanitizeSnippet(text: string, max = 600): string {
+  try {
+    return JSON.stringify(sanitizeForLog(JSON.parse(text))).slice(0, max);
+  } catch {
+    return text.replace(/Bearer\s+[A-Za-z0-9_\-.]{12,}/g, "Bearer [redacted]").replace(BBAN_RE, (_m, bsb, mid, last) => `${bsb}-${"•".repeat(mid.length)}${last}`).slice(0, max);
+  }
+}
+
 /**
  * Thin, honest wrapper over the Zepto REST API.
  *
@@ -92,7 +130,7 @@ export class ZeptoClient implements ZeptoApi {
         apiVersion: this.apiVersion,
         idempotencyKey: extraHeaders["Idempotency-Key"],
         error: `network: ${(err as Error).message}`,
-        requestBody: body,
+        requestBody: sanitizeForLog(body),
         mode: "sandbox",
         context: currentApiContext(),
       });
@@ -121,8 +159,8 @@ export class ZeptoClient implements ZeptoApi {
         apiVersion: this.apiVersion,
         idempotencyKey: extraHeaders["Idempotency-Key"],
         error: `${err.code ? err.code + " " : ""}${err.title}: ${err.detail}`,
-        requestBody: body,
-        responseSnippet: text.slice(0, 600),
+        requestBody: sanitizeForLog(body),
+        responseSnippet: sanitizeSnippet(text),
         mode: "sandbox",
         context: currentApiContext(),
       });
@@ -139,8 +177,8 @@ export class ZeptoClient implements ZeptoApi {
       requestId,
       apiVersion: this.apiVersion,
       idempotencyKey: extraHeaders["Idempotency-Key"],
-      requestBody: body,
-      responseSnippet: text.slice(0, 600),
+      requestBody: sanitizeForLog(body),
+      responseSnippet: sanitizeSnippet(text),
       mode: "sandbox",
       context: currentApiContext(),
     });
@@ -151,6 +189,12 @@ export class ZeptoClient implements ZeptoApi {
     const requestId = res.headers.get("x-request-id") ?? undefined;
     const wa = res.headers.get("www-authenticate") ?? "";
     const scope = wa.match(/requires scope _([a-z_]+)_/i)?.[1];
+    const retryAfterHeader = res.headers.get("retry-after");
+    const retryAfterSeconds = retryAfterHeader && /^\d+$/.test(retryAfterHeader) ? Number(retryAfterHeader) : undefined;
+    // Zepto attaches `meta` to some errors: a 409 idempotency replay carries
+    // meta.resource_ref, the object the original request created. Keep it — it is
+    // how a lost response gets recovered.
+    const meta = parsed && typeof parsed === "object" && (parsed as { meta?: unknown }).meta && typeof (parsed as { meta?: unknown }).meta === "object" ? ((parsed as { meta: Record<string, unknown> }).meta) : undefined;
     if (res.status === 403 && scope) {
       return new ZeptoError({
         status: 403,
@@ -172,10 +216,12 @@ export class ZeptoClient implements ZeptoApi {
         detail: (first.detail ?? "") + extra,
         requestId,
         path,
+        meta,
+        retryAfterSeconds,
       });
     }
     if (p && typeof p.errors === "string") {
-      return new ZeptoError({ status: res.status, title: `HTTP ${res.status}`, detail: p.errors, requestId, path });
+      return new ZeptoError({ status: res.status, title: res.status === 409 ? "Duplicate request" : `HTTP ${res.status}`, detail: p.errors, requestId, path, meta, retryAfterSeconds });
     }
     return new ZeptoError({
       status: res.status,
@@ -183,6 +229,8 @@ export class ZeptoClient implements ZeptoApi {
       detail: typeof parsed === "string" && parsed ? parsed.slice(0, 200) : res.statusText || "Request failed",
       requestId,
       path,
+      meta,
+      retryAfterSeconds,
     });
   }
 
