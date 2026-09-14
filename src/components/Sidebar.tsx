@@ -27,6 +27,22 @@ export function Sidebar() {
   const missing = health?.probes.filter((p) => !p.ok) ?? [];
 
   return (
+    <>
+      {/* Narrow screens: navigation and the environment badge stay reachable. */}
+      <div className="sticky top-0 z-10 flex items-center gap-2 overflow-x-auto border-b border-line bg-surface px-3 py-2 md:hidden">
+        <Link href="/" className="mr-1 flex shrink-0 items-center gap-2 text-sm font-semibold">
+          <BrolgaMark /> Brolga
+        </Link>
+        {NAV.map((n) => {
+          const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
+          return (
+            <Link key={n.href} href={n.href} className="navlink !px-2 !py-1 text-xs" data-active={active}>
+              {n.label}
+            </Link>
+          );
+        })}
+        <span className="ml-auto shrink-0">{health ? <Pill tone={health.mode === "sandbox" ? "brand" : "warn"}>{health.mode === "sandbox" ? "Sandbox" : "Mock"}</Pill> : <Pill tone="neutral" pulse>connecting</Pill>}</span>
+      </div>
     <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-surface px-4 py-5 md:flex">
       <Link href="/" className="mb-6 flex items-center gap-2.5 px-2">
         <BrolgaMark />
@@ -79,6 +95,7 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+    </>
   );
 }
 

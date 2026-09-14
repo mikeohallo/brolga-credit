@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useResource, useAction, api } from "@/lib/client";
-import { Card, PageHeader, Pill, Stat, LoanStatusPill, Money, Mono, Spinner, ErrorBanner, Empty } from "@/components/ui";
+import { Card, PageHeader, Pill, Stat, LoanStatusPill, Money, Mono, Spinner, ErrorBanner, StaleBanner, Empty } from "@/components/ui";
 import { timeAgo, aud, dateTime } from "@/lib/format";
 import type { Loan, Borrower } from "@/lib/db";
 
@@ -15,7 +15,9 @@ type Health = {
   operator: string;
   funding: { label: string; nppCapable: boolean; channels: string[]; accountType: string; availableBalance: number | null; accounts: { id: string; title: string; bank_name: string; account_type: string; available_balance: number | null; branch_code: string; account_number: string }[] };
   probes: { name: string; scope: string; ok: boolean; note?: string }[];
+  probeNote?: string;
   counts: { borrowers: number; loans: number; apiCalls: number };
+  store?: { readable: boolean; error?: string };
   checkedAt: string;
 };
 
@@ -29,7 +31,7 @@ export default function Overview() {
 
   const all = loans.data?.loans ?? [];
   const active = all.filter((l) => ["active", "in_arrears", "suspended", "mandate_pending"].includes(l.status));
-  const disbursed = all.reduce((sum, l) => sum + (l.disbursement?.creditStatus === "cleared" ? l.principalCents : 0), 0);
+  const disbursed = all.reduce((sum, l) => sum + (l.disbursement?.creditStatus === "cleared" && l.disbursement?.status === "cleared" ? l.principalCents : 0), 0);
   const collected = all.reduce((sum, l) => sum + l.instalments.filter((i) => i.state === "settled").reduce((s, i) => s + i.amountCents, 0), 0);
   const arrears = all.filter((l) => l.status === "in_arrears").length;
   const events = all
@@ -62,11 +64,13 @@ export default function Overview() {
           </>
         }
       >
-        Small loans, settled in seconds. Disbursement over the NPP, repayments by PayTo, every movement reconciled against Zepto.
+        Small loans, settled in seconds. Disbursement over the NPP, repayments by PayTo, every status read back from Zepto&rsquo;s ledger.
       </PageHeader>
 
       <ErrorBanner error={act.error} onDismiss={act.clearError} />
       <ErrorBanner error={health.error} />
+      <StaleBanner message={loans.data && loans.error ? loans.error.detail : null} />
+      {health.data?.store && !health.data.store.readable && <StaleBanner message={health.data.store.error ?? "The data store is unreadable"} />}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Active loans" value={active.length} hint={`${all.length} total`} />
@@ -195,18 +199,19 @@ export default function Overview() {
                   </div>
                 </div>
                 <div>
-                  <div className="mb-1.5 text-ink-3">Capabilities on this token</div>
-                  <ul className="space-y-1">
+                  <div className="mb-1.5 text-ink-3">What this token could do just now</div>
+                  <ul className="space-y-1.5">
                     {health.data.probes.map((p) => (
-                      <li key={p.name} className="flex items-center justify-between gap-2">
-                        <span>{p.name}</span>
-                        <span className="flex items-center gap-2">
-                          {p.note && <span className="text-xs text-ink-3">{p.note}</span>}
-                          <Pill tone={p.ok ? "good" : "warn"}>{p.ok ? "ok" : "unavailable"}</Pill>
+                      <li key={p.name} className="flex items-start justify-between gap-2">
+                        <span>
+                          <span>{p.name}</span>
+                          {p.note && <span className="block text-[11px] text-ink-3">{p.note}</span>}
                         </span>
+                        <Pill tone={p.ok ? "good" : "warn"}>{p.ok ? "read ok" : "unavailable"}</Pill>
                       </li>
                     ))}
                   </ul>
+                  {health.data.probeNote && <p className="mt-2 text-[11px] text-ink-3">{health.data.probeNote}</p>}
                 </div>
                 <div className="flex items-center justify-between text-xs text-ink-3">
                   <span>{health.data.counts.apiCalls} API calls logged</span>

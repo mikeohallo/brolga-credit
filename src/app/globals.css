@@ -10,7 +10,7 @@
   --color-line-strong: #cfcbc0;
   --color-ink: #1b1d1c;
   --color-ink-2: #55605b;
-  --color-ink-3: #8a938e;
+  --color-ink-3: #636c67; /* ≥ 4.9:1 on every surface the app uses — small secondary text stays readable on a projector */
   --color-brand: #0f5c50;
   --color-brand-strong: #0a463d;
   --color-brand-soft: #e2efeb;

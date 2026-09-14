@@ -100,7 +100,8 @@ await page.click("button:has-text('PayTo payments')");
 await wait(1200);
 await shot("15-operations-payto");
 await page.goto(`${base}/console`);
-await page.waitForSelector("text=API console");
+// The nav also carries an "API console" link, so anchor on the page heading.
+await page.waitForSelector("h1:has-text('API console')");
 await wait(1200);
 await page.click("tr:has-text('POST') >> nth=0");
 await wait(500);

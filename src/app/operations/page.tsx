@@ -6,6 +6,8 @@ import { Card, PageHeader, Pill, Money, Mono, Spinner, ErrorBanner, Empty, PAYOU
 import type { Transaction, PaytoPayment, Webhook, WebhookDelivery } from "@/lib/zepto/types";
 import { dateTime } from "@/lib/format";
 
+type LabelledTransaction = Transaction & { side: string };
+
 type Tab = "ledger" | "payto" | "webhooks";
 
 export default function Operations() {
@@ -30,9 +32,9 @@ export default function Operations() {
 }
 
 function Ledger() {
-  const { data, error, loading, reload } = useResource<{ transactions: Transaction[] }>("/api/ops/transactions");
+  const { data, error, loading, reload } = useResource<{ transactions: LabelledTransaction[] }>("/api/ops/transactions");
   return (
-    <Card title="GET /transactions" subtitle="Debits and credits on Brolga's Zepto account, newest first" actions={<button className="btn btn-ghost btn-sm" onClick={reload}>Refresh</button>} padded={false}>
+    <Card title="GET /transactions?both_parties=true" subtitle="Both sides of every payout — Brolga's debit and the borrower's credit — plus reversals, newest first. Without both_parties the borrower-side return never appears." actions={<button className="btn btn-ghost btn-sm" onClick={reload}>Refresh</button>} padded={false}>
       <ErrorBanner error={error} />
       {loading ? (
         <div className="flex items-center gap-2 p-5 text-sm text-ink-3">
@@ -47,8 +49,8 @@ function Ledger() {
           <thead>
             <tr>
               <th>Ref</th>
-              <th>Type</th>
-              <th>Party</th>
+              <th>Side</th>
+              <th>Counterparty</th>
               <th className="text-right">Amount</th>
               <th>Channel</th>
               <th>Status</th>
@@ -64,8 +66,8 @@ function Ledger() {
                   {t.parent_ref && <div className="text-[11px] text-ink-3">in {t.parent_ref}</div>}
                 </td>
                 <td>
-                  <div className="capitalize">{t.category.replace("_", " ")}</div>
-                  <div className="text-[11px] text-ink-3">{t.type}</div>
+                  <div>{t.side}</div>
+                  <div className="text-[11px] text-ink-3">{t.category.replace("_", " ")} · {t.type}</div>
                 </td>
                 <td>{t.party_name ?? "—"}</td>
                 <td className={`text-right ${t.type === "credit" ? "text-good" : ""}`}>

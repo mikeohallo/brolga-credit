@@ -80,6 +80,7 @@ export const AGREEMENT_STATUS: Record<string, { tone: Tone; pulse?: boolean }> =
 
 export const INSTALMENT_STATUS: Record<string, { label: string; tone: Tone; pulse?: boolean }> = {
   scheduled: { label: "Scheduled", tone: "neutral" },
+  unknown: { label: "Sent · no answer yet", tone: "warn", pulse: true },
   created: { label: "Initiated", tone: "info", pulse: true },
   submitting: { label: "Submitting", tone: "info", pulse: true },
   pending: { label: "Pending", tone: "warn", pulse: true },
@@ -198,6 +199,21 @@ export function ErrorBanner({ error, onDismiss }: { error: ApiError | null; onDi
           Dismiss
         </button>
       )}
+    </div>
+  );
+}
+
+export function StaleBanner({ message }: { message: string | null | undefined }) {
+  if (!message) return null;
+  return (
+    <div className="rise mb-4 flex items-start gap-3 rounded-xl border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-warn">
+      <span className="mt-0.5 leading-none" aria-hidden>
+        ⚠
+      </span>
+      <div>
+        <div className="font-semibold">Showing the last known state — the latest refresh failed</div>
+        <div className="mt-0.5 opacity-90">{message}</div>
+      </div>
     </div>
   );
 }
