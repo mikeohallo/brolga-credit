@@ -113,7 +113,7 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
           <div className="text-right">
             <div className="text-2xl font-semibold tracking-tight tnum">{aud(loan.principalCents)}</div>
             <div className="text-xs text-ink-3">
-              {loan.instalments.length} × {aud(m?.instalmentCents ?? loan.instalmentCents)} · {loan.purpose}
+              {loan.instalments.length} instalments · {aud(m?.instalmentCents ?? loan.instalmentCents)} a fortnight · {loan.purpose}
             </div>
           </div>
         }
@@ -156,9 +156,28 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
             </Card>
           )}
 
+          {/* ---- CoP never run ----------------------------------------------------- */}
+          {canDisburse && !loan.copHold && !borrower.cop && (
+            <Card title="Verify the borrower first" subtitle="No money moves until Confirmation of Payee has been run on the account" className="rise">
+              <p className="text-sm text-ink-2">
+                {borrower.name}&rsquo;s account ({borrower.bsb} {borrower.accountNumber}) has not been checked. Run the check from the Borrowers page; if Zepto cannot answer, the loan records that the check was unavailable and disbursement is allowed on that basis.
+              </p>
+              <div className="mt-4">
+                <Link href="/borrowers" className="btn btn-primary">
+                  Go to Borrowers
+                </Link>
+              </div>
+            </Card>
+          )}
+
           {/* ---- disburse ---------------------------------------------------------- */}
-          {canDisburse && !loan.copHold && (
+          {canDisburse && !loan.copHold && !!borrower.cop && (
             <Card title={d ? "Disburse again" : "Disburse the loan"} subtitle="POST /payments — one payout to the borrower's account, with an idempotency key that is kept until Zepto answers" className="rise">
+              {borrower.cop.result === "error" && (
+                <div className="mb-3 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">
+                  Confirmation of Payee was unavailable for this account. Disbursing is allowed, and the timeline will say the check was unavailable rather than passed.
+                </div>
+              )}
               {d && d.failure && (
                 <div className="mb-3 rounded-lg bg-critical-soft px-3 py-2 text-sm text-critical">
                   Previous attempt {d.payoutRef} failed: {d.failure.code} {d.failure.title}. {d.reversalRef ? `Funds reversed to Brolga (${d.reversalRef}).` : "Zepto reverses the funds to Brolga once the return is processed; Brolga keeps watching for it."}

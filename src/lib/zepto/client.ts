@@ -37,6 +37,8 @@ type Envelope<T> = { data: T; links?: Record<string, string> };
 // The API console shows request and response payloads. Anything that looks like
 // a credential is redacted and account identifiers are masked before a payload is
 // written to the log, so a screen-share or an exported log never carries either.
+// The same rule applies to the error field: provider error text is logged only
+// through redactText, never raw.
 const SECRET_KEY = /(token|secret|password|passwd|authorization|signature|api[_-]?key|client_secret|refresh_token|access_token)/i;
 const ACCOUNT_KEY = /(account_number|bban|account_identifier|payid|alias_value)/i;
 const BBAN_RE = /\b(\d{6})-(\d{3,})(\d{3})\b/g;
@@ -59,15 +61,23 @@ export function sanitizeForLog(value: unknown): unknown {
     }
     return out;
   }
-  if (typeof value === "string") return value.replace(/Bearer\s+[A-Za-z0-9_\-.]{12,}/g, "Bearer [redacted]");
+  if (typeof value === "string") return redactText(value);
   return value;
+}
+
+/** Plain text destined for the log: credentials out, account numbers masked. */
+export function redactText(text: string): string {
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9_\-.]{12,}/g, "Bearer [redacted]")
+    .replace(/\b(token|secret|password|passwd|api[_-]?key|client_secret|refresh_token|access_token)\b(\s*[:=]\s*|\s+)([A-Za-z0-9_\-.]{12,})/gi, "$1$2[redacted]")
+    .replace(BBAN_RE, (_m, bsb, mid, last) => `${bsb}-${"•".repeat(mid.length)}${last}`);
 }
 
 export function sanitizeSnippet(text: string, max = 600): string {
   try {
     return JSON.stringify(sanitizeForLog(JSON.parse(text))).slice(0, max);
   } catch {
-    return text.replace(/Bearer\s+[A-Za-z0-9_\-.]{12,}/g, "Bearer [redacted]").replace(BBAN_RE, (_m, bsb, mid, last) => `${bsb}-${"•".repeat(mid.length)}${last}`).slice(0, max);
+    return redactText(text).slice(0, max);
   }
 }
 
@@ -129,7 +139,7 @@ export class ZeptoClient implements ZeptoApi {
         ok: false,
         apiVersion: this.apiVersion,
         idempotencyKey: extraHeaders["Idempotency-Key"],
-        error: `network: ${(err as Error).message}`,
+        error: redactText(`network: ${(err as Error).message}`),
         requestBody: sanitizeForLog(body),
         mode: "sandbox",
         context: currentApiContext(),
@@ -158,7 +168,7 @@ export class ZeptoClient implements ZeptoApi {
         requestId,
         apiVersion: this.apiVersion,
         idempotencyKey: extraHeaders["Idempotency-Key"],
-        error: `${err.code ? err.code + " " : ""}${err.title}: ${err.detail}`,
+        error: redactText(`${err.code ? err.code + " " : ""}${err.title}: ${err.detail}`),
         requestBody: sanitizeForLog(body),
         responseSnippet: sanitizeSnippet(text),
         mode: "sandbox",

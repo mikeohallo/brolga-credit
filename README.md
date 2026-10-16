@@ -3,9 +3,16 @@
 > **Status:** built and verified end to end against the Zepto sandbox on 12 September 2026
 > (Direct Entry disbursement, PayTo agreement, real-time collection with failure and retry,
 > suspension, reactivation, bilateral amendment, cancellation), then independently reviewed
-> and hardened on 13 September (see [Tests](#tests)). A demo, not a product.
+> and hardened over the following two days. A second independent review on 16 October
+> found a race in the disbursement path and a gap in the Confirmation of Payee gate; both
+> are fixed and covered by new checks (see [Tests](#tests)). A demo, not a product.
 
 ![Brolga Credit loan page — repayment schedule, disbursement with debit and credit refs, PayTo agreement with lifecycle actions](docs/loan-page.png)
+
+*The screenshot is the app in `mock` mode with synthetic borrowers, taken by
+`scripts/walkthrough.mjs` after the first instalment settled and the remaining debt was
+restructured from $433.34 to $270.84 a fortnight. The schedule, the 2c rounding adjustment
+and the amount owing reconcile to the cent.*
 
 Brolga Credit is a fictional small-loan lender. This app is its loan desk: a loan
 officer verifies a borrower's bank account, disburses the loan, sets up a PayTo
@@ -18,14 +25,20 @@ can be developed and demonstrated when the sandbox is unreachable.
 
 ## Run it
 
-Requirements: Node 20+ (tested on 24).
+Requirements: Node 22.15 or later (the app runs on 20.9+, but the test runner uses
+`module.registerHooks`, which arrived in 22.15). Tested on 22 and 24.
 
 ```bash
 npm install
-copy .env.example .env.local     # then paste your sandbox token into ZEPTO_TOKEN
+cp .env.example .env.local       # Windows: copy .env.example .env.local
+                                 # then paste your sandbox token into ZEPTO_TOKEN
 npm run build
 npm start                        # http://localhost:3000
 ```
+
+The app has no login of its own: it is a loan desk for one operator on one machine, and
+anyone who can reach port 3000 can move money with the configured token. Keep it on
+localhost, or put mock mode in front of an audience you do not control.
 
 `npm run dev` also works and hot-reloads, but `build` + `start` is the mode to
 use in front of an audience: no compile-on-first-visit pauses.
@@ -86,8 +99,17 @@ Design choices worth knowing:
   re-cut locally (settled and in-flight instalments keep their amounts) and
   any rounding is recorded as an adjustment so the schedule always equals the
   obligation.
-- **Confirmation of Payee is a gate.** A no-match or closed account puts the
-  loan on hold; disbursing needs an audited override with a reason.
+- **Confirmation of Payee is a gate, checked when money moves.** The borrower's
+  latest result governs, not a snapshot taken when the loan was written: a
+  no-match or closed account holds the loan whenever it arrives, a borrower who
+  was never checked cannot be disbursed, and lifting a hold needs an audited
+  override with a reason. If Zepto cannot answer, the loan may still be
+  disbursed and the timeline says the check was unavailable, not that it passed.
+- **One loan, one money movement at a time.** Disbursement runs under a per-loan
+  lock and re-reads the loan inside it, so two overlapping requests produce one
+  payout and one refusal. An idempotency key protects a repeated request; it
+  cannot protect against two different keys for the same action, which is what
+  two concurrent clicks would otherwise mint.
 
 - **Polling, not webhooks.** Webhook endpoints can only be created in Zepto's
   portal and need a public URL. Brolga polls the specific objects it has in
@@ -107,7 +129,7 @@ Design choices worth knowing:
 node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json
 ```
 
-Forty-five checks run the real domain code and route handlers against the mock
+Forty-eight checks run the real domain code and route handlers against the mock
 provider with a controllable clock and no network: schedule arithmetic, the
 credit-is-the-truth disbursement rule, collection gating, lost-response
 recovery for both payouts and PayTo payments, restructure reconciliation,
@@ -116,8 +138,32 @@ resilience, and redaction in the API log. The suite began as an independent
 review harness (14 of 36 checks passed on the first cut) and was kept as the
 regression gate while the findings were fixed.
 
+A second review on 16 October 2026, by a separate session that had not seen the
+code being written, found three things the suite did not cover: two overlapping
+disbursement requests created two payouts; a Confirmation of Payee no-match that
+arrived after the loan was written did not hold it; and provider error text
+reached the API log without redaction. T46 to T48 reproduce each one. They fail
+on the code as it was and pass on the fix.
+
 `CHROME_PATH=<chromium> node scripts/walkthrough.mjs http://localhost:3000 ./shots`
 drives the whole demo in a browser and saves a screenshot of each step.
+
+## How this was built
+
+Brolga was built with Claude in September 2026, as a way of learning the Zepto API
+properly rather than reading about it. The
+product rules are mine: what a loan desk needs to see, that the borrower-side
+credit is the truth, that no match means no money, what a restructure does to a
+debt, and which failure paths had to be demonstrable rather than described. The
+code, the mock and the test harness were written with the model, against the
+sandbox, with every call visible in the API console as it went.
+
+Two habits mattered more than any prompt. Every money-moving step was persisted
+before it was sent, so a lost answer could be recovered rather than guessed at.
+And the code was reviewed by a session that had no part in writing it: the first
+review's harness failed 22 of its 36 checks and became the test suite; the second,
+a month later, found a race and a gating gap that the first had missed. Both
+reviews are in the history.
 
 ## Things learned about the Zepto API while building this
 

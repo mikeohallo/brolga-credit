@@ -1,7 +1,7 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-09-14T05:04:10.646Z",
-  "runtime": "v24.19.0",
+  "executedAt": "2026-10-16T02:18:44.486Z",
+  "runtime": "v22.22.2",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
   "network": {
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 0,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 45,
-  "passed": 45,
+  "total": 48,
+  "passed": 48,
   "failed": 0,
   "results": [
     {
@@ -543,7 +543,7 @@
       "result": "PASS",
       "observations": {
         "readable": false,
-        "error": "data\\brolga.mock.json is unreadable (Expected ',' or ']' after array element in JSON at position 28 (line 1 column 29)). It has been left untouched; move it aside to start fresh.",
+        "error": "data/brolga.mock.json is unreadable (Expected ',' or ']' after array element in JSON at position 28 (line 1 column 29)). It has been left untouched; move it aside to start fresh.",
         "writeRefused": true,
         "loans": 0,
         "filePreserved": true
@@ -579,6 +579,50 @@
       "observations": {
         "status": "cancelled",
         "outstanding": 46800
+      }
+    },
+    {
+      "id": "T46",
+      "name": "Concurrent disbursement requests produce exactly one payout",
+      "expectation": "Two overlapping disburse calls for one loan must result in one provider payment, one idempotency key and one adopted reference; the second call is refused, not paid.",
+      "result": "PASS",
+      "observations": {
+        "outcomes": [
+          "fulfilled",
+          "rejected"
+        ],
+        "providerDebits": 1,
+        "attempts": 1,
+        "intentLeft": false,
+        "refusal": "This loan already has a disbursement in flight or completed"
+      }
+    },
+    {
+      "id": "T47",
+      "name": "Confirmation of Payee is evaluated when money moves, not when the loan was written",
+      "expectation": "A no-match that arrives after loan creation holds the loan; a borrower who was never checked cannot be disbursed; a later match lifts a hold that has no override.",
+      "result": "PASS",
+      "observations": {
+        "holdAfterLateNoMatch": true,
+        "statusAfterLateNoMatch": "draft",
+        "holdEvent": true,
+        "holdAfterLaterMatch": false,
+        "clearedEvent": true,
+        "uncheckedStatus": "draft",
+        "uncheckedEvent": true,
+        "unavailableDisbursed": true,
+        "unavailableEvent": true
+      }
+    },
+    {
+      "id": "T48",
+      "name": "Provider error text is redacted before it reaches the API log",
+      "expectation": "A credential echoed back in a provider error body must not appear in the console, in the error field or anywhere else in the log entry.",
+      "result": "PASS",
+      "observations": {
+        "sentinelInConsole": false,
+        "errorField": "ZSYN01 Synthetic failure: Rejected request carrying Bearer [redacted] for token [redacted]",
+        "snippet": "{\"errors\":[{\"code\":\"ZSYN01\",\"title\":\"Synthetic failure\",\"detail\":\"Rejected request carrying Bearer [redacted] for token [redacted]\"}]}"
       }
     }
   ]

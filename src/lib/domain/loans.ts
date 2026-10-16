@@ -11,6 +11,37 @@ const IN_FLIGHT_INSTALMENT_STATES = new Set(["unknown", "created", "submitting",
 const REVERSAL_WATCH_MS = 60 * 60 * 1000; // keep looking for the payout_reversal for an hour after a failure
 
 // ---------------------------------------------------------------------------
+// Per-loan serialisation of money movements. Brolga is one process, so a chain of
+// promises keyed by loan id is enough: the second of two overlapping calls waits
+// for the first to finish and then re-reads the loan, so it sees the payout the
+// first call made instead of minting its own idempotency key. Idempotency keys
+// protect a *repeated* request; they cannot protect against two different keys
+// for the same business action, which is what two concurrent clicks would be.
+// Kept on globalThis for the same reason the store is: Next may load this module
+// more than once in development.
+// ---------------------------------------------------------------------------
+type LockMap = Map<string, Promise<void>>;
+const g = globalThis as unknown as { __brolgaLoanLocks?: LockMap };
+const loanLocks: LockMap = (g.__brolgaLoanLocks ??= new Map());
+
+export async function withLoanLock<T>(loanId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = loanLocks.get(loanId) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const mine = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = prev.then(() => mine);
+  loanLocks.set(loanId, tail);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (loanLocks.get(loanId) === tail) loanLocks.delete(loanId);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Funding source: prefer an NPP-capable float; otherwise the primary linked
 // bank account (Direct Entry only). The choice is surfaced in the UI because it
 // is the single biggest determinant of the borrower experience.
@@ -117,8 +148,51 @@ export async function verifyBorrower(borrowerId: string, simulate?: CopSimulate)
       borrower.cop = { uid, result: "error", simulated: simulate, checkedAt: new Date().toISOString(), error };
     } else throw err;
   }
+  // A result that arrives after a loan was created still governs that loan: a
+  // no-match puts an undisbursed loan on hold, a match lifts a hold that had no
+  // override. Loans whose money has already moved keep the record they have.
+  for (const loan of loadDb().loans) if (loan.borrowerId === borrower.id) applyCop(loan, borrower);
   saveDb();
   return borrower;
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation of Payee policy. It is evaluated against the borrower's LATEST
+// result, at the moment money is about to move, not from a snapshot taken when
+// the loan was created:
+//   match / close_match   verified
+//   no_match / closed     held until a named person records an override (the
+//                         override stands once recorded; it is on the timeline)
+//   unavailable (error)   money may move, and the timeline says the check was
+//                         unavailable rather than pretending it passed
+//   never run             refused until the account has been checked
+// ---------------------------------------------------------------------------
+export type CopVerdict = "verified" | "held" | "overridden" | "unavailable" | "unchecked";
+
+export function copGate(loan: Loan, borrower: Borrower): { verdict: CopVerdict; detail: string } {
+  const cop = borrower.cop;
+  if (!cop) return { verdict: "unchecked", detail: "Confirmation of Payee has not been run for this borrower" };
+  const result = cop.result.replace("_", " ");
+  if (cop.result === "match" || cop.result === "close_match") return { verdict: "verified", detail: `Confirmation of Payee: ${result}` };
+  if (cop.result === "error") return { verdict: "unavailable", detail: `Confirmation of Payee was unavailable: ${cop.error ?? "no result"}` };
+  if (loan.copOverride) return { verdict: "overridden", detail: `Confirmation of Payee returned "${result}"; overridden by ${loan.copOverride.by}` };
+  return { verdict: "held", detail: `Confirmation of Payee returned "${result}"` };
+}
+
+/** Re-apply the latest CoP result to a loan whose money has not moved. Returns true if the hold changed. */
+export function applyCop(loan: Loan, borrower: Borrower): boolean {
+  if (loan.disbursement && disbursementSettled(loan.disbursement) !== "failed") return false;
+  const gate = copGate(loan, borrower);
+  const hold = gate.verdict === "held";
+  const changed = hold !== loan.copHold;
+  if (changed) {
+    loan.copHold = hold;
+    if (hold) pushEvent(loan, "loan.cop_hold", `${gate.detail} — disbursement is held until an override is recorded`, "warning");
+    else pushEvent(loan, "loan.cop_cleared", `${gate.detail} — the hold is lifted`, "success");
+  }
+  if (!loan.disbursement) loan.status = gate.verdict === "verified" || gate.verdict === "overridden" ? "verified" : "draft";
+  loan.updatedAt = new Date().toISOString();
+  return changed;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +258,8 @@ export function createLoan(input: { borrowerId: string; principalCents: number; 
   };
   pushEvent(loan, "loan.created", `Loan created for ${borrower.name}: ${aud(q.principalCents)} over ${q.termFortnights} fortnights, ${aud(q.instalmentCents)} per instalment`);
   if (copHold) pushEvent(loan, "loan.cop_hold", `Confirmation of Payee returned "${borrower.cop!.result.replace("_", " ")}" — disbursement is held until an override is recorded`, "warning");
-  else if (!copVerified) pushEvent(loan, "loan.cop_unavailable", "Confirmation of Payee was not completed for this borrower; the loan is a draft, not verified", "warning");
+  else if (!borrower.cop) pushEvent(loan, "loan.cop_unchecked", "Confirmation of Payee has not been run for this borrower; the loan is a draft and cannot be disbursed until the account has been checked", "warning");
+  else if (!copVerified) pushEvent(loan, "loan.cop_unavailable", "Confirmation of Payee was unavailable for this borrower; the loan is a draft, not verified", "warning");
   db.loans.push(loan);
   saveDb();
   return loan;
@@ -245,11 +320,22 @@ export async function recordCopOverride(loanId: string, by: string, reason: stri
 }
 
 export async function disburse(loanId: string, opts: { forceFailure?: "de_account_not_found" | "npp_not_enabled" } = {}): Promise<Loan> {
-  const loan = getLoan(loanId);
-  if (!loan) throw new Error(`Unknown loan ${loanId}`);
-  if (loan.copHold) throw new Error("Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason");
+  if (!getLoan(loanId)) throw new Error(`Unknown loan ${loanId}`);
+  return withLoanLock(loanId, () => disburseLocked(loanId, opts));
+}
+
+async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account_not_found" | "npp_not_enabled" }): Promise<Loan> {
+  // Everything below runs under the loan's lock, and the loan is re-read here so a
+  // request that queued behind another sees that request's result.
+  const loan = getLoan(loanId)!;
+  const payee = getBorrower(loan.borrowerId)!;
+  applyCop(loan, payee);
+  const gate = copGate(loan, payee);
+  if (gate.verdict === "unchecked") throw new Error("Confirmation of Payee has not been run for this borrower — disbursement is refused until the account has been checked");
+  if (gate.verdict === "held") throw new Error("Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason");
   if (loan.disbursement && disbursementSettled(loan.disbursement) !== "failed") throw new Error("This loan already has a disbursement in flight or completed");
-  const borrower = await ensureContact(getBorrower(loan.borrowerId)!);
+  if (gate.verdict === "unavailable") pushEvent(loan, "disbursement.cop_unavailable", `Disbursing without a Confirmation of Payee result: ${gate.detail}. Recorded, not assumed.`, "warning");
+  const borrower = await ensureContact(payee);
   const z = getZepto();
 
   // Reuse an unresolved intent (the previous attempt got no answer); otherwise mint one.

@@ -1,8 +1,10 @@
 // Offline invariant suite for Brolga. Adapted from the independent review harness
 // of 12 September 2026 (T01–T36), with T24 strengthened to assert the enforced
-// Confirmation of Payee policy and T37–T45 added for the invariants introduced in
-// the stabilisation pass. Runs the real TypeScript modules with Node's type
-// stripping, a fake clock and the in-memory mock; no server, browser or network.
+// Confirmation of Payee policy, T37–T45 added for the invariants introduced in
+// the stabilisation pass, and T46–T48 added after the second review of 16 October
+// 2026 (concurrent disbursement, late CoP results, error-field redaction). Runs
+// the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
+// clock and the in-memory mock; no server, browser or network.
 //
 //   node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json
 //
@@ -56,7 +58,7 @@ const params = (id) => ({ params: Promise.resolve({ id }) });
 const results = [];
 let facts;
 function note(value) { Object.assign(facts, value); }
-function reset() {
+async function reset() {
   time = baseTime + results.length * 1000;
   globalThis.fetch = blockedFetch;
   process.env.MOCK_FLOAT = '0';
@@ -64,6 +66,9 @@ function reset() {
   globalThis.__brolgaHealth = undefined;
   resetMock();
   db.resetDb();
+  // The intended flow checks the account before a loan is written; a borrower
+  // that was never checked cannot be disbursed (T47 covers that case directly).
+  await domain.verifyBorrower('BRW-0001', 'match');
   facts = {};
 }
 function loan(principalCents = 60000, termFortnights = 4) {
@@ -91,7 +96,7 @@ async function payment(l, simulation = 'auto_settle', n = 1) {
   await domain.refreshLoan(l.id);
 }
 async function test(id, name, expectation, fn) {
-  reset();
+  await reset();
   try {
     await fn();
     results.push({ id, name, expectation, result: 'PASS', observations: facts });
@@ -547,6 +552,54 @@ try {
     note({ status: l.status, outstanding: domain.outstandingCents(l) });
     assert.equal(l.status, 'cancelled');
     assert.ok(domain.outstandingCents(l) > 0);
+  });
+  await test('T46', 'Concurrent disbursement requests produce exactly one payout', 'Two overlapping disburse calls for one loan must result in one provider payment, one idempotency key and one adopted reference; the second call is refused, not paid.', async () => {
+    const l = loan();
+    const outcomes = await Promise.allSettled([domain.disburse(l.id), domain.disburse(l.id)]);
+    const tx = await z.transactions({ both_parties: 'true' });
+    const debits = tx.filter(t => t.type === 'debit');
+    note({ outcomes: outcomes.map(o => o.status), providerDebits: debits.length, attempts: l.disbursementAttempts, intentLeft: !!l.disbursementIntent, refusal: outcomes.find(o => o.status === 'rejected')?.reason?.message });
+    assert.equal(outcomes.filter(o => o.status === 'fulfilled').length, 1, 'Both overlapping disbursements succeeded.');
+    assert.equal(debits.length, 1, `The provider holds ${debits.length} debits for one loan.`);
+    assert.equal(l.disbursementAttempts, 1);
+    assert.match(outcomes.find(o => o.status === 'rejected').reason.message, /already has a disbursement/);
+  });
+  await test('T47', 'Confirmation of Payee is evaluated when money moves, not when the loan was written', 'A no-match that arrives after loan creation holds the loan; a borrower who was never checked cannot be disbursed; a later match lifts a hold that has no override.', async () => {
+    const l = loan();
+    assert.equal(l.status, 'verified');
+    await domain.verifyBorrower('BRW-0001', 'individual_no_match');
+    note({ holdAfterLateNoMatch: l.copHold, statusAfterLateNoMatch: l.status, holdEvent: l.events.some(e => e.type === 'loan.cop_hold') });
+    assert.equal(l.copHold, true, 'A no-match after loan creation did not hold the loan.');
+    await assert.rejects(domain.disburse(l.id), /refused/);
+    await domain.verifyBorrower('BRW-0001', 'match');
+    note({ holdAfterLaterMatch: l.copHold, clearedEvent: l.events.some(e => e.type === 'loan.cop_cleared') });
+    assert.equal(l.copHold, false);
+    await domain.disburse(l.id);
+    assert.ok(l.disbursement, 'A later match did not permit disbursement.');
+    // Never checked: BRW-0002 has no CoP result at all.
+    const unchecked = domain.createLoan({ borrowerId: 'BRW-0002', principalCents: 60000, termFortnights: 4, purpose: 'Synthetic unchecked borrower' });
+    note({ uncheckedStatus: unchecked.status, uncheckedEvent: unchecked.events.some(e => e.type === 'loan.cop_unchecked') });
+    await assert.rejects(domain.disburse(unchecked.id), /has not been run/);
+    assert.ok(!unchecked.disbursement, 'A never-checked borrower was disbursed.');
+    // Unavailable: the check ran and the provider refused; money may move and the timeline says so.
+    z.validateAccount = async () => { throw new ZeptoError({ status: 403, title: 'Forbidden', detail: 'Synthetic refusal' }); };
+    await domain.verifyBorrower('BRW-0002');
+    await domain.disburse(unchecked.id);
+    note({ unavailableDisbursed: !!unchecked.disbursement, unavailableEvent: unchecked.events.some(e => e.type === 'disbursement.cop_unavailable') });
+    assert.ok(unchecked.disbursement);
+    assert.ok(unchecked.events.some(e => e.type === 'disbursement.cop_unavailable'), 'Disbursing on an unavailable check was not recorded on the timeline.');
+  });
+  await test('T48', 'Provider error text is redacted before it reaches the API log', 'A credential echoed back in a provider error body must not appear in the console, in the error field or anywhere else in the log entry.', async () => {
+    const sentinel = 'SYNTHETIC_ERROR_ECHO_TOKEN_NOT_REAL_0123456789';
+    globalThis.fetch = async () => new Response(JSON.stringify({ errors: [{ code: 'ZSYN01', title: 'Synthetic failure', detail: `Rejected request carrying Bearer ${sentinel} for token ${sentinel}` }] }), { status: 422, headers: { 'content-type': 'application/json' } });
+    const c = new ZeptoClient({ token: 'dummy', baseUrl: 'https://review.invalid' });
+    await assert.rejects(c.user());
+    const payload = JSON.stringify(await (await routes.console.GET(request('/api/console'))).json());
+    const entry = db.loadDb().apilog.at(-1);
+    note({ sentinelInConsole: payload.includes(sentinel), errorField: entry.error, snippet: entry.responseSnippet });
+    assert.ok(!payload.includes(sentinel), 'The error field copied provider error text into the console without redaction.');
+    assert.ok(!entry.error.includes(sentinel));
+    assert.ok(!(entry.responseSnippet ?? '').includes(sentinel));
   });
 } finally {
   globalThis.Date = RealDate;
