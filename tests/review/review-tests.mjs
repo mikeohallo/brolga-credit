@@ -2,7 +2,9 @@
 // of 12 September 2026 (T01–T36), with T24 strengthened to assert the enforced
 // Confirmation of Payee policy, T37–T45 added for the invariants introduced in
 // the stabilisation pass, and T46–T48 added after the second review of 16 October
-// 2026 (concurrent disbursement, late CoP results, error-field redaction). Runs
+// 2026 (concurrent disbursement, late CoP results, error-field redaction) and
+// T49–T50 after its re-check (CoP arriving mid-disbursement, account numbers in
+// logged paths). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -600,6 +602,37 @@ try {
     assert.ok(!payload.includes(sentinel), 'The error field copied provider error text into the console without redaction.');
     assert.ok(!entry.error.includes(sentinel));
     assert.ok(!(entry.responseSnippet ?? '').includes(sentinel));
+  });
+  await test('T49', 'A CoP result that lands during disbursement still governs it', 'The per-loan lock serialises disbursements, not verifications: a no-match that arrives while the funding lookup is in flight must stop the payout before it is sent.', async () => {
+    const l = loan();
+    let resume;
+    const paused = new Promise(r => { resume = r; });
+    const realAccounts = z.bankAccounts.bind(z);
+    z.bankAccounts = async () => { await paused; return realAccounts(); };
+    const attempt = domain.disburse(l.id);
+    await new Promise(r => setTimeout(r, 20)); // the disbursement is now waiting on the funding lookup
+    await domain.verifyBorrower('BRW-0001', 'individual_no_match');
+    note({ heldWhilePaused: l.copHold, disbursementWhilePaused: !!l.disbursement });
+    resume();
+    const outcome = await attempt.then(() => 'fulfilled', e => 'rejected: ' + e.message);
+    const debits = (await z.transactions({ both_parties: 'true' })).filter(t => t.type === 'debit');
+    note({ outcome, providerDebits: debits.length, intentLeft: !!l.disbursementIntent, attempts: l.disbursementAttempts });
+    assert.match(outcome, /refused/, 'A no-match that arrived during the funding lookup did not stop the payout.');
+    assert.equal(debits.length, 0, 'A payout was sent after the borrower had been held.');
+    assert.ok(!l.disbursement);
+    assert.ok(!l.disbursementIntent, 'An intent was minted for a held loan.');
+  });
+  await test('T50', 'Account identifiers in request paths are masked in the API log', 'A contact lookup carries the BSB and account number in its query string; the logged path, and the console that shows it, must not reveal the full account number.', async () => {
+    const synthetic = '999990001';
+    globalThis.fetch = async () => Response.json({ data: [] });
+    const c = new ZeptoClient({ token: 'dummy', baseUrl: 'https://review.invalid' });
+    await c.findContacts({ branch_code: '062000', account_number: synthetic });
+    const entry = db.loadDb().apilog.at(-1);
+    const payload = JSON.stringify(await (await routes.console.GET(request('/api/console'))).json());
+    note({ loggedPath: entry.path, fullAccountInConsole: payload.includes(synthetic), last3Present: entry.path.includes('001') });
+    assert.ok(!entry.path.includes(synthetic), 'The full account number is in the logged path.');
+    assert.ok(!payload.includes(synthetic), 'The full account number reaches the console.');
+    assert.ok(entry.path.includes('bank_account_branch_code=062000'), 'The branch code should remain readable.');
   });
 } finally {
   globalThis.Date = RealDate;

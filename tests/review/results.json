@@ -1,6 +1,6 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-10-16T02:18:44.486Z",
+  "executedAt": "2026-10-16T04:37:18.991Z",
   "runtime": "v22.22.2",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 0,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 48,
-  "passed": 48,
+  "total": 50,
+  "passed": 50,
   "failed": 0,
   "results": [
     {
@@ -623,6 +623,31 @@
         "sentinelInConsole": false,
         "errorField": "ZSYN01 Synthetic failure: Rejected request carrying Bearer [redacted] for token [redacted]",
         "snippet": "{\"errors\":[{\"code\":\"ZSYN01\",\"title\":\"Synthetic failure\",\"detail\":\"Rejected request carrying Bearer [redacted] for token [redacted]\"}]}"
+      }
+    },
+    {
+      "id": "T49",
+      "name": "A CoP result that lands during disbursement still governs it",
+      "expectation": "The per-loan lock serialises disbursements, not verifications: a no-match that arrives while the funding lookup is in flight must stop the payout before it is sent.",
+      "result": "PASS",
+      "observations": {
+        "heldWhilePaused": true,
+        "disbursementWhilePaused": false,
+        "outcome": "rejected: Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason",
+        "providerDebits": 0,
+        "intentLeft": false,
+        "attempts": 0
+      }
+    },
+    {
+      "id": "T50",
+      "name": "Account identifiers in request paths are masked in the API log",
+      "expectation": "A contact lookup carries the BSB and account number in its query string; the logged path, and the console that shows it, must not reveal the full account number.",
+      "result": "PASS",
+      "observations": {
+        "loggedPath": "/contacts?bank_account_branch_code=062000&bank_account_account_number=••••••001",
+        "fullAccountInConsole": false,
+        "last3Present": true
       }
     }
   ]

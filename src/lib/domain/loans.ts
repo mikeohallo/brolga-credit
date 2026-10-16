@@ -324,15 +324,21 @@ export async function disburse(loanId: string, opts: { forceFailure?: "de_accoun
   return withLoanLock(loanId, () => disburseLocked(loanId, opts));
 }
 
+/** Apply the borrower's latest CoP result and refuse if money must not move. */
+function enforceCop(loan: Loan, payee: Borrower): ReturnType<typeof copGate> {
+  applyCop(loan, payee);
+  const gate = copGate(loan, payee);
+  if (gate.verdict === "unchecked") throw new Error("Confirmation of Payee has not been run for this borrower — disbursement is refused until the account has been checked");
+  if (gate.verdict === "held") throw new Error("Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason");
+  return gate;
+}
+
 async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account_not_found" | "npp_not_enabled" }): Promise<Loan> {
   // Everything below runs under the loan's lock, and the loan is re-read here so a
   // request that queued behind another sees that request's result.
   const loan = getLoan(loanId)!;
   const payee = getBorrower(loan.borrowerId)!;
-  applyCop(loan, payee);
-  const gate = copGate(loan, payee);
-  if (gate.verdict === "unchecked") throw new Error("Confirmation of Payee has not been run for this borrower — disbursement is refused until the account has been checked");
-  if (gate.verdict === "held") throw new Error("Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason");
+  const gate = enforceCop(loan, payee);
   if (loan.disbursement && disbursementSettled(loan.disbursement) !== "failed") throw new Error("This loan already has a disbursement in flight or completed");
   if (gate.verdict === "unavailable") pushEvent(loan, "disbursement.cop_unavailable", `Disbursing without a Confirmation of Payee result: ${gate.detail}. Recorded, not assumed.`, "warning");
   const borrower = await ensureContact(payee);
@@ -342,6 +348,13 @@ async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account
   let intent = loan.disbursementIntent ?? null;
   if (!intent) {
     const f = await withApiContext(`${loan.id} · choose funding account`, funding);
+    // The lock serialises disbursements, not verifications: a Confirmation of Payee
+    // result can land while the contact and funding calls above are in flight. The
+    // gate is therefore enforced again here, with nothing asynchronous between this
+    // check and the request leaving. A recovery of an earlier unanswered intent is
+    // not re-gated: that money may already have moved, and replaying the same key
+    // cannot pay twice.
+    enforceCop(loan, payee);
     // Sandbox failures are amount-driven ($1.05 → E105, $3.03 → E303). To demo a failed
     // disbursement we send the special amount and say so loudly in the event log.
     let amount = loan.principalCents;

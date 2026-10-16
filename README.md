@@ -37,8 +37,9 @@ npm start                        # http://localhost:3000
 ```
 
 The app has no login of its own: it is a loan desk for one operator on one machine, and
-anyone who can reach port 3000 can move money with the configured token. Keep it on
-localhost, or put mock mode in front of an audience you do not control.
+anyone who can reach port 3000 can move money with the configured token. `npm start` and
+`npm run dev` therefore bind to 127.0.0.1 only; if you deliberately expose it on a network,
+put mock mode in front of an audience you do not control.
 
 `npm run dev` also works and hot-reloads, but `build` + `start` is the mode to
 use in front of an audience: no compile-on-first-visit pauses.
@@ -109,7 +110,9 @@ Design choices worth knowing:
   lock and re-reads the loan inside it, so two overlapping requests produce one
   payout and one refusal. An idempotency key protects a repeated request; it
   cannot protect against two different keys for the same action, which is what
-  two concurrent clicks would otherwise mint.
+  two concurrent clicks would otherwise mint. The lock does not serialise
+  verifications, so the CoP gate is enforced a second time immediately before a
+  new payment is committed, with nothing asynchronous in between.
 
 - **Polling, not webhooks.** Webhook endpoints can only be created in Zepto's
   portal and need a public URL. Brolga polls the specific objects it has in
@@ -129,7 +132,7 @@ Design choices worth knowing:
 node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json
 ```
 
-Forty-eight checks run the real domain code and route handlers against the mock
+Fifty checks run the real domain code and route handlers against the mock
 provider with a controllable clock and no network: schedule arithmetic, the
 credit-is-the-truth disbursement rule, collection gating, lost-response
 recovery for both payouts and PayTo payments, restructure reconciliation,
@@ -143,7 +146,10 @@ code being written, found three things the suite did not cover: two overlapping
 disbursement requests created two payouts; a Confirmation of Payee no-match that
 arrived after the loan was written did not hold it; and provider error text
 reached the API log without redaction. T46 to T48 reproduce each one. They fail
-on the code as it was and pass on the fix.
+on the code as it was and pass on the fix. The same reviewer's re-check found two
+narrower gaps: a no-match arriving while the funding lookup was in flight could
+still be followed by a payout, and the contact lookup's query string put the
+account number in the logged path. T49 and T50 cover those.
 
 `CHROME_PATH=<chromium> node scripts/walkthrough.mjs http://localhost:3000 ./shots`
 drives the whole demo in a browser and saves a screenshot of each step.

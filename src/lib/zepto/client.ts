@@ -73,6 +73,32 @@ export function redactText(text: string): string {
     .replace(BBAN_RE, (_m, bsb, mid, last) => `${bsb}-${"•".repeat(mid.length)}${last}`);
 }
 
+/**
+ * The request path as it may be logged or shown. Query values that identify an
+ * account are masked to their last three characters; a branch code (BSB) names a
+ * bank, not a customer, and stays readable. This is a display string, not a URL
+ * to request, so the mask is written as plain characters.
+ */
+export function sanitizePath(path: string): string {
+  const q = path.indexOf("?");
+  if (q < 0) return path;
+  const masked = path
+    .slice(q + 1)
+    .split("&")
+    .map((pair) => {
+      const eq = pair.indexOf("=");
+      if (eq < 0) return pair;
+      const k = pair.slice(0, eq);
+      const v = decodeURIComponent(pair.slice(eq + 1));
+      if (SECRET_KEY.test(k)) return `${k}=[redacted]`;
+      if (/branch_code|bsb/i.test(k)) return pair;
+      if (ACCOUNT_KEY.test(k) || /account|bban|payid|alias/i.test(k)) return `${k}=${v.length > 3 ? "•".repeat(v.length - 3) + v.slice(-3) : "•••"}`;
+      return pair;
+    })
+    .join("&");
+  return path.slice(0, q) + "?" + masked;
+}
+
 export function sanitizeSnippet(text: string, max = 600): string {
   try {
     return JSON.stringify(sanitizeForLog(JSON.parse(text))).slice(0, max);
@@ -133,7 +159,7 @@ export class ZeptoClient implements ZeptoApi {
       appendApiLog({
         at: new Date().toISOString(),
         method,
-        path,
+        path: sanitizePath(path),
         status: 0,
         ms,
         ok: false,
@@ -161,7 +187,7 @@ export class ZeptoClient implements ZeptoApi {
       appendApiLog({
         at: new Date().toISOString(),
         method,
-        path,
+        path: sanitizePath(path),
         status: res.status,
         ms,
         ok: false,
@@ -180,7 +206,7 @@ export class ZeptoClient implements ZeptoApi {
     appendApiLog({
       at: new Date().toISOString(),
       method,
-      path,
+      path: sanitizePath(path),
       status: res.status,
       ms,
       ok: true,
@@ -209,10 +235,10 @@ export class ZeptoClient implements ZeptoApi {
       return new ZeptoError({
         status: 403,
         title: "Missing OAuth scope",
-        detail: `This token cannot call ${path}: the OAuth application needs the "${scope}" scope. Add it under Your applications and mint a new Personal Access Token.`,
+        detail: `This token cannot call ${sanitizePath(path)}: the OAuth application needs the "${scope}" scope. Add it under Your applications and mint a new Personal Access Token.`,
         requiredScope: scope,
         requestId,
-        path,
+        path: sanitizePath(path),
       });
     }
     const p = parsed as { errors?: unknown } | null;
@@ -225,7 +251,7 @@ export class ZeptoClient implements ZeptoApi {
         title: first.title ?? `HTTP ${res.status}`,
         detail: (first.detail ?? "") + extra,
         requestId,
-        path,
+        path: sanitizePath(path),
         meta,
         retryAfterSeconds,
       });
@@ -238,7 +264,7 @@ export class ZeptoClient implements ZeptoApi {
       title: `HTTP ${res.status}`,
       detail: typeof parsed === "string" && parsed ? parsed.slice(0, 200) : res.statusText || "Request failed",
       requestId,
-      path,
+      path: sanitizePath(path),
       meta,
       retryAfterSeconds,
     });
