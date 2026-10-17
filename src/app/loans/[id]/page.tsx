@@ -131,6 +131,13 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
               <p className="text-sm text-ink-2">
                 The bank reported <strong>{borrower.cop?.result.replace("_", " ")}</strong> for {borrower.bsb} {borrower.accountNumber}. Brolga&rsquo;s policy is no match, no money. An override is possible but it is audited: the name and reason go on the loan&rsquo;s timeline.
               </p>
+              {loan.disbursementIntent && (
+                <div className="mt-3 rounded-lg bg-critical-soft px-3 py-2 text-sm text-critical">
+                  {loan.disbursementIntent.outcome === "unresolved"
+                    ? <>Needs reconciliation: an earlier disbursement attempt ({loan.disbursementIntent.attempt}) got no answer and Zepto has no record of it, so it probably never arrived. Nothing has been re-sent. Brolga keeps checking Zepto; a new attempt needs the override first.</>
+                    : <>An earlier disbursement attempt ({loan.disbursementIntent.attempt}) got no answer from Zepto. Brolga is checking whether that payout exists — if it does it is adopted as is, hold or no hold, because the money has already moved. Nothing new is sent while the hold stands.</>}
+                </div>
+              )}
               {!showOverride ? (
                 <div className="mt-4 flex gap-2">
                   <Link href="/borrowers" className="btn btn-primary">
@@ -185,7 +192,13 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
               )}
               {loan.disbursementIntent?.outcome === "unknown" && (
                 <div className="mb-3 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">
-                  Attempt {loan.disbursementIntent.attempt} got no answer from Zepto. Disbursing again re-sends the same request with the same idempotency key, so it cannot pay twice.
+                  Attempt {loan.disbursementIntent.attempt} got no answer from Zepto. Brolga asks Zepto whether the payout exists before anything else: if it does, it is adopted as is; if not, the same request is re-sent only if the account check still allows it.
+                </div>
+              )}
+              {loan.disbursementIntent?.outcome === "unresolved" && (
+                <div className="mb-3 rounded-lg bg-critical-soft px-3 py-2 text-sm text-critical">
+                  Needs reconciliation: Zepto has no record of attempt {loan.disbursementIntent.attempt}, so the request probably never arrived — nothing has been re-sent.
+                  {loan.copHold ? " The account check is on hold, so a new attempt needs a recorded override first; until then this loan waits for a person." : " A new attempt goes through the account check again before any money moves."}
                 </div>
               )}
               <p className="text-sm text-ink-2">

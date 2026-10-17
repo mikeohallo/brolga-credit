@@ -324,6 +324,8 @@ export interface ZeptoApi {
   validateAccount(input: ValidateAccountInput): Promise<CopResult>;
   createPayment(input: CreatePaymentInput): Promise<PaymentBatch>;
   getPayment(ref: string): Promise<PaymentBatch>;
+  /** `GET /payments` — newest first; the only filters the API offers are `page` and `per_page`. */
+  listPayments(query?: { page?: number; per_page?: number }): Promise<PaymentBatch[]>;
   transactions(query?: Record<string, string>): Promise<Transaction[]>;
   createAgreement(input: CreateAgreementInput): Promise<Agreement>;
   getAgreement(uid: string): Promise<Agreement>;

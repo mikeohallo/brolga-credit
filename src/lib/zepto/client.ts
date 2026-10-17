@@ -324,6 +324,14 @@ export class ZeptoClient implements ZeptoApi {
     return r.body.data;
   }
 
+  async listPayments(query?: { page?: number; per_page?: number }): Promise<PaymentBatch[]> {
+    const q: Record<string, string> = {};
+    if (query?.page) q.page = String(query.page);
+    if (query?.per_page) q.per_page = String(query.per_page);
+    const r = await this.request<Envelope<PaymentBatch[]>>("GET", "/payments" + this.qs(q));
+    return r.body.data;
+  }
+
   async transactions(query?: Record<string, string>): Promise<Transaction[]> {
     const r = await this.request<Envelope<Transaction[]>>("GET", "/transactions" + this.qs(query));
     return r.body.data;

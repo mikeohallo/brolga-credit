@@ -82,7 +82,16 @@ export type DisbursementIntent = {
   fundingLabel: string;
   forceFailure?: string;
   createdAt: string;
-  outcome: "sending" | "unknown";
+  /** The Confirmation of Payee verdict in force at the moment the request left — the audited one. */
+  copVerdict?: string;
+  /**
+   * sending    — request in flight (or the process died mid-request)
+   * unknown    — Zepto gave no answer; the payout may or may not exist
+   * unresolved — looked up at Zepto and not found, but the request is not safe to
+   *              replay (the payee is on a Confirmation of Payee hold); needs a person
+   */
+  outcome: "sending" | "unknown" | "unresolved";
+  lastLookupAt?: string;
 };
 
 export type Adjustment = {
@@ -105,6 +114,8 @@ export type Disbursement = {
   fundingLabel: string;
   failure?: { code: string; title: string; detail: string } | null;
   attempt?: number;
+  /** The Confirmation of Payee verdict recorded when this payout was submitted. */
+  copVerdict?: string;
   failedAt?: string | null;
   createdAt: string;
   updatedAt: string;

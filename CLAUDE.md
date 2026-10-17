@@ -28,7 +28,7 @@ this file never do.
 
 - `npm ci` (never `npm install`; the lockfile is the record of what runs).
 - `node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json`
-  — expect 50 passed, 0 failed; stop on any failure.
+  — expect 53 passed, 0 failed; stop on any failure.
 - Build: `npm run build`. Run: `npm start` (binds to 127.0.0.1; never add `-H 0.0.0.0`).
 - Walkthrough: `node scripts/walkthrough.mjs http://127.0.0.1:3000 ./shots` with
   `CHROME_PATH` set to a Chromium binary, in `mock` mode unless Mike's line says sandbox.

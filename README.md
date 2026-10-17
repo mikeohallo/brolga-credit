@@ -5,7 +5,12 @@
 > suspension, reactivation, bilateral amendment, cancellation), then independently reviewed
 > and hardened over the following two days. A second independent review on 16 October
 > found a race in the disbursement path and a gap in the Confirmation of Payee gate; both
-> are fixed and covered by new checks (see [Tests](#tests)). A demo, not a product.
+> are fixed and covered by new checks (see [Tests](#tests)). A third assessment on
+> 17 October found that a lost payout answer followed by a Confirmation of Payee hold
+> could not be reconciled; fixed the same day. A demo, not a product.
+
+[![CI](https://github.com/mikeohallo/brolga-credit/actions/workflows/ci.yml/badge.svg)](https://github.com/mikeohallo/brolga-credit/actions/workflows/ci.yml)
+MIT licence.
 
 ![Brolga Credit loan page — repayment schedule, disbursement with debit and credit refs, PayTo agreement with lifecycle actions](docs/loan-page.png)
 
@@ -92,9 +97,17 @@ Design choices worth knowing:
   disbursement intent (with its idempotency key) and the instalment (with its
   PayTo uid) are persisted first. If the network or a 5xx swallows the answer
   the record is marked `unknown`; the next refresh asks Zepto what happened
-  (`GET` by uid, or replay the `POST` and read the 409's `resource_ref`)
   before anything is retried, so a lost response never becomes a second
-  payment.
+  payment. For a payout that means reading `GET /payments` for the batch
+  carrying the intent's key (nothing is re-sent to find out); for a PayTo
+  payment, `GET` by uid.
+- **Finding a lost payout comes before any gate.** If the payout exists at
+  Zepto the money has moved, and it is adopted whatever Confirmation of Payee
+  says now — reconciliation is not a new payment. If Zepto has no record of
+  it, the loan shows an explicit *unresolved* state and a replay is treated as
+  what it is, a new payment: it goes through the CoP gate like any other, so a
+  held payee is never paid blind. The CoP verdict recorded on the payout is the
+  one taken immediately before the request left, not the earlier one.
 - **A restructure changes the authority, Brolga reconciles the debt.** The
   PayTo amendment changes what may be collected; the remaining balance is
   re-cut locally (settled and in-flight instalments keep their amounts) and
@@ -132,7 +145,7 @@ Design choices worth knowing:
 node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json
 ```
 
-Fifty checks run the real domain code and route handlers against the mock
+Fifty-three checks run the real domain code and route handlers against the mock
 provider with a controllable clock and no network: schedule arithmetic, the
 credit-is-the-truth disbursement rule, collection gating, lost-response
 recovery for both payouts and PayTo payments, restructure reconciliation,
@@ -150,6 +163,16 @@ on the code as it was and pass on the fix. The same reviewer's re-check found tw
 narrower gaps: a no-match arriving while the funding lookup was in flight could
 still be followed by a payout, and the contact lookup's query string put the
 account number in the logged path. T49 and T50 cover those.
+
+A third assessment, of the public repository on 17 October 2026, found that the
+recovery of a lost payout answer sat behind the Confirmation of Payee gate, so a
+no-match landing after a lost answer left a possibly-sent payment unreconciled,
+and that the CoP verdict recorded was the early one rather than the one in force
+at submission. T51 to T53 cover the three cases (lost answer then a hold with the
+payout found; lost answer then a hold with nothing found; a match that turns
+unavailable before submission). They fail on the code as it was and pass on the
+fix. The same workflow now runs on every push to this repository — see the badge
+above and `.github/workflows/ci.yml`; it holds no secrets and makes no Zepto calls.
 
 `CHROME_PATH=<chromium> node scripts/walkthrough.mjs http://localhost:3000 ./shots`
 drives the whole demo in a browser and saves a screenshot of each step.
@@ -210,3 +233,9 @@ reviews are in the history.
 - An idempotent replay of `POST /payments` returns 409 with
   `meta.resource_ref` naming the batch the first request created — which is
   what makes lost-response recovery possible without a second payout.
+
+## Licence
+
+MIT — see `LICENSE`. The software is provided as is, without warranty of any kind;
+this is a demonstration of an integration, not a product, and it has never moved
+real money.

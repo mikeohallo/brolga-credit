@@ -357,6 +357,16 @@ export class MockZepto implements ZeptoApi {
     return { ref: b.ref, channels: b.channels, your_bank_account_id: b.your_bank_account_id, metadata: b.metadata, payouts: b.payouts.map((p) => payoutView(p, b.createdAt)) };
   }
 
+  async listPayments(query?: { page?: number; per_page?: number }): Promise<PaymentBatch[]> {
+    // Newest first, paged like the sandbox; no other filters exist on this endpoint.
+    const page = Math.max(1, query?.page ?? 1);
+    const per = Math.min(100, Math.max(1, query?.per_page ?? 25));
+    const all = [...state().payments].sort((a, b) => b.createdAt - a.createdAt);
+    const slice = all.slice((page - 1) * per, page * per);
+    log("GET", `/payments?page=${page}&per_page=${per}`, 200);
+    return slice.map((b) => ({ ref: b.ref, channels: b.channels, your_bank_account_id: b.your_bank_account_id, metadata: b.metadata, payouts: b.payouts.map((p) => payoutView(p, b.createdAt)) }));
+  }
+
   async transactions(query?: Record<string, string>): Promise<Transaction[]> {
     // Mirrors the sandbox: the debit (D.*) is Brolga's side; the borrower-side
     // credit (C.*) only appears with both_parties=true, and a failed credit shows

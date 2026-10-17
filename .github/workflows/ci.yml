@@ -1,0 +1,34 @@
+name: CI
+
+# Public evidence that the offline suite and the build pass on every push.
+# No secrets, no Zepto calls: the suite blocks fetch and runs against the mock,
+# and the build needs no token. This workflow never deploys anything.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Suite, lint and build
+    runs-on: ubuntu-latest
+    env:
+      ZEPTO_MODE: mock
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Offline invariant suite (53 checks, no network)
+        run: node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . ci-results.json
+      - name: Suite must be all green
+        run: node -e "const r=require('./ci-results.json'); console.log(r.passed+'/'+r.total+' passed'); if(r.failed!==0||r.passed!==r.total) process.exit(1)"
+      - run: npm run lint
+      - run: npm run build

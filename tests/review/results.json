@@ -1,7 +1,7 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-10-16T04:37:18.991Z",
-  "runtime": "v22.22.2",
+  "executedAt": "2026-10-17T13:12:56.082Z",
+  "runtime": "v22.22.0",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
   "network": {
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 0,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 50,
-  "passed": 50,
+  "total": 53,
+  "passed": 53,
   "failed": 0,
   "results": [
     {
@@ -172,14 +172,16 @@
     {
       "id": "T14",
       "name": "Unknown disbursement retry after a return",
-      "expectation": "A retry after a lost response must reuse the accepted retry intent.",
+      "expectation": "A retry after a lost response must reuse the accepted retry intent — by replaying its key or by finding the payout it created — never by paying again.",
       "result": "PASS",
       "observations": {
         "retryKeys": [
-          "brolga-qmqx4-ln-0001-disburse-2",
           "brolga-qmqx4-ln-0001-disburse-2"
         ],
-        "distinctRetryIntents": 1
+        "distinctRetryIntents": 1,
+        "sendsAfterLoss": 0,
+        "retryBatchesAtProvider": 1,
+        "adopted": "PB.2x"
       }
     },
     {
@@ -648,6 +650,51 @@
         "loggedPath": "/contacts?bank_account_branch_code=062000&bank_account_account_number=••••••001",
         "fullAccountInConsole": false,
         "last3Present": true
+      }
+    },
+    {
+      "id": "T51",
+      "name": "A lost payout answer followed by a CoP hold is still reconciled",
+      "expectation": "If a payout was accepted but its answer was lost, and the payee is then held, the next refresh must find the payout at Zepto and adopt it — the money has moved; the hold cannot undo that, and no override may be needed to see it.",
+      "result": "PASS",
+      "observations": {
+        "heldBeforeRecovery": true,
+        "adopted": "PB.2v",
+        "intentLeft": false,
+        "recoveredEvent": true,
+        "providerDebits": 1,
+        "holdStillRecorded": true,
+        "overrideUsed": false,
+        "status": "disbursing"
+      }
+    },
+    {
+      "id": "T52",
+      "name": "A lost request Zepto never received is not replayed through a CoP hold",
+      "expectation": "When the lookup finds no payout, the intent becomes an explicit unresolved state; a held payee blocks any replay (a replay is a new payment), and the same key is reused only once a person has overridden the hold.",
+      "result": "PASS",
+      "observations": {
+        "lostKey": "brolga-qnk8o-ln-0001-disburse-1",
+        "afterRefresh": "unresolved",
+        "attemptWhileHeld": "rejected: Confirmation of Payee did not match this account — disbursement is refused until an override is recorded with a reason",
+        "sentWhileHeld": 0,
+        "unresolvedWhileHeld": "unresolved",
+        "keyAfterOverride": "brolga-qnk8o-ln-0001-disburse-1",
+        "sameKey": true,
+        "unresolvedEvent": true,
+        "adopted": true
+      }
+    },
+    {
+      "id": "T53",
+      "name": "The CoP verdict recorded is the one in force when the payout leaves",
+      "expectation": "A match that turns unavailable during the funding lookup may still be paid (policy), but the timeline and the payout record must say so — the early verdict is not the audited one.",
+      "result": "PASS",
+      "observations": {
+        "copAtSubmission": "error",
+        "recordedVerdict": "unavailable",
+        "warningOnTimeline": true,
+        "warningBeforeCreated": true
       }
     }
   ]

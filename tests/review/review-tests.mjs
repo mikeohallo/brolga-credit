@@ -4,7 +4,8 @@
 // the stabilisation pass, and T46–T48 added after the second review of 16 October
 // 2026 (concurrent disbursement, late CoP results, error-field redaction) and
 // T49–T50 after its re-check (CoP arriving mid-disbursement, account numbers in
-// logged paths). Runs
+// logged paths), and T51–T53 after the third assessment of 17 October (lost payout
+// answer reconciled ahead of the CoP gate; the verdict recorded at submission). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -247,7 +248,7 @@ try {
     note({ uidSavedAfterLoss: uidAfterLoss, providerPaymentCount: ledger.length, providerUids: ledger.map(p => p.uid), locallyTrackedUid: l.instalments[0].paymentUid, localAttempts: l.instalments[0].attempts });
     assert.equal(ledger.length, 1, 'Lost response led to a second payment for the same instalment after the period restriction elapsed.');
   });
-  await test('T14', 'Unknown disbursement retry after a return', 'A retry after a lost response must reuse the accepted retry intent.', async () => {
+  await test('T14', 'Unknown disbursement retry after a return', 'A retry after a lost response must reuse the accepted retry intent — by replaying its key or by finding the payout it created — never by paying again.', async () => {
     const l = loan();
     await domain.disburse(l.id, { forceFailure: 'de_account_not_found' });
     advance(9500);
@@ -259,8 +260,12 @@ try {
     advance(1000);
     z.createPayment = async (input) => { inputs.push(input); return original(input); };
     await domain.disburse(l.id);
-    note({ retryKeys: inputs.map(i => i.idempotency_key), distinctRetryIntents: new Set(inputs.map(i => i.idempotency_key)).size });
-    assert.equal(inputs[0].idempotency_key, inputs[1].idempotency_key, 'Retry after unknown acceptance minted a different idempotency key.');
+    const retryBatches = (await z.listPayments({ per_page: 50 })).filter(b => b.metadata?.loan_id === l.id && b.payouts[0]?.amount === l.principalCents);
+    note({ retryKeys: inputs.map(i => i.idempotency_key), distinctRetryIntents: new Set(inputs.map(i => i.idempotency_key)).size, sendsAfterLoss: inputs.length - 1, retryBatchesAtProvider: retryBatches.length, adopted: l.disbursement?.paymentRef });
+    assert.equal(new Set(inputs.map(i => i.idempotency_key)).size, 1, 'Retry after unknown acceptance minted a different idempotency key.');
+    assert.equal(retryBatches.length, 1, 'The provider holds more than one retry payout for the loan.');
+    assert.equal(l.disbursement?.paymentRef, retryBatches[0].ref, 'The loan did not adopt the payout the lost request created.');
+    assert.ok(!l.disbursementIntent, 'The recovered intent was left behind.');
   });
   await test('T15', 'Delayed payout reversal remains tracked', 'A reversal arriving after the returned credit must attach to the failed loan.', async () => {
     const l = loan();
@@ -633,6 +638,75 @@ try {
     assert.ok(!entry.path.includes(synthetic), 'The full account number is in the logged path.');
     assert.ok(!payload.includes(synthetic), 'The full account number reaches the console.');
     assert.ok(entry.path.includes('bank_account_branch_code=062000'), 'The branch code should remain readable.');
+  });
+  // T51–T53: third assessment (17 Oct 2026), finding N07 — recovery of a lost payout
+  // answer must come before the Confirmation of Payee gate, and the verdict recorded
+  // must be the one in force when the request left.
+  await test('T51', 'A lost payout answer followed by a CoP hold is still reconciled', 'If a payout was accepted but its answer was lost, and the payee is then held, the next refresh must find the payout at Zepto and adopt it — the money has moved; the hold cannot undo that, and no override may be needed to see it.', async () => {
+    const l = loan();
+    const original = z.createPayment.bind(z);
+    z.createPayment = async (input) => { await original(input); throw new ZeptoError({ status: 0, title: 'Network error', detail: 'Synthetic lost response after provider acceptance', path: '/payments' }); };
+    await assert.rejects(domain.disburse(l.id));
+    assert.equal(l.disbursementIntent?.outcome, 'unknown');
+    await domain.verifyBorrower('BRW-0001', 'individual_no_match');
+    const heldBeforeRecovery = l.copHold;
+    z.createPayment = async () => { throw new Error('A new payout was sent while reconciling a lost one.'); };
+    await domain.refreshLoan(l.id);
+    const debits = (await z.transactions({ both_parties: 'true' })).filter(t => t.type === 'debit');
+    note({ heldBeforeRecovery, adopted: l.disbursement?.paymentRef, intentLeft: !!l.disbursementIntent, recoveredEvent: l.events.some(e => e.type === 'disbursement.recovered'), providerDebits: debits.length, holdStillRecorded: l.copHold, overrideUsed: !!l.copOverride, status: l.status });
+    assert.ok(heldBeforeRecovery, 'The no-match did not put the loan on hold.');
+    assert.ok(l.disbursement, 'The payout Zepto accepted was not adopted while the loan was held.');
+    assert.ok(!l.disbursementIntent, 'The lost intent was left unreconciled.');
+    assert.equal(debits.length, 1, 'Reconciliation sent a payout instead of finding the existing one.');
+    assert.ok(!l.copOverride, 'An override should not be needed to reconcile money that has already moved.');
+    assert.ok(l.events.some(e => e.type === 'disbursement.recovered'), 'The recovery is not on the timeline.');
+  });
+  await test('T52', 'A lost request Zepto never received is not replayed through a CoP hold', 'When the lookup finds no payout, the intent becomes an explicit unresolved state; a held payee blocks any replay (a replay is a new payment), and the same key is reused only once a person has overridden the hold.', async () => {
+    const l = loan();
+    z.createPayment = async () => { throw new ZeptoError({ status: 0, title: 'Network error', detail: 'Synthetic request lost before reaching the provider', path: '/payments' }); };
+    await assert.rejects(domain.disburse(l.id));
+    const lostKey = l.disbursementIntent?.key;
+    await domain.verifyBorrower('BRW-0001', 'individual_no_match');
+    await domain.refreshLoan(l.id);
+    const afterRefresh = l.disbursementIntent?.outcome;
+    const sent = [];
+    const original = nativeMethods.createPayment;
+    z.createPayment = async (input) => { sent.push(input.idempotency_key); return original(input); };
+    const attempt = await domain.disburse(l.id).then(() => 'fulfilled', e => 'rejected: ' + e.message);
+    const sentWhileHeld = sent.length;
+    const unresolvedWhileHeld = l.disbursementIntent?.outcome;
+    await domain.recordCopOverride(l.id, 'reviewer', 'Synthetic override: borrower provided a bank statement in person');
+    await domain.disburse(l.id);
+    note({ lostKey, afterRefresh, attemptWhileHeld: attempt, sentWhileHeld, unresolvedWhileHeld, keyAfterOverride: sent[0], sameKey: sent[0] === lostKey, unresolvedEvent: l.events.some(e => e.type === 'disbursement.unresolved'), adopted: !!l.disbursement });
+    assert.equal(afterRefresh, 'unresolved', 'A lookup that finds nothing must leave an explicit unresolved state.');
+    assert.match(attempt, /refused/, 'A held payee did not block the replay.');
+    assert.equal(sentWhileHeld, 0, 'The lost request was replayed blind through the hold.');
+    assert.equal(unresolvedWhileHeld, 'unresolved', 'The unresolved state was lost by the refused attempt.');
+    assert.equal(sent.length, 1, 'After the override exactly one request should go out.');
+    assert.equal(sent[0], lostKey, 'The replay after the override did not reuse the original idempotency key.');
+    assert.ok(l.disbursement && !l.disbursementIntent);
+  });
+  await test('T53', 'The CoP verdict recorded is the one in force when the payout leaves', 'A match that turns unavailable during the funding lookup may still be paid (policy), but the timeline and the payout record must say so — the early verdict is not the audited one.', async () => {
+    const l = loan();
+    let resume;
+    const paused = new Promise(r => { resume = r; });
+    const realAccounts = z.bankAccounts.bind(z);
+    z.bankAccounts = async () => { await paused; return realAccounts(); };
+    const attempt = domain.disburse(l.id);
+    await new Promise(r => setTimeout(r, 20)); // waiting on the funding lookup, after the early gate passed as "verified"
+    z.validateAccount = async () => { throw new ZeptoError({ status: 503, title: 'Service Unavailable', detail: 'Synthetic Confirmation of Payee outage' }); };
+    await domain.verifyBorrower('BRW-0001');
+    const copAtSubmission = db.getBorrower('BRW-0001').cop.result;
+    resume();
+    await attempt;
+    const warning = l.events.find(e => e.type === 'disbursement.cop_unavailable');
+    const created = l.events.find(e => e.type === 'disbursement.created');
+    note({ copAtSubmission, recordedVerdict: l.disbursement?.copVerdict, warningOnTimeline: !!warning, warningBeforeCreated: !!warning && !!created && l.events.indexOf(warning) < l.events.indexOf(created) });
+    assert.equal(copAtSubmission, 'error');
+    assert.ok(l.disbursement, 'An unavailable check should not block the payout under the stated policy.');
+    assert.equal(l.disbursement.copVerdict, 'unavailable', 'The payout record carries the early verdict, not the one used at submission.');
+    assert.ok(warning, 'The unavailable warning from the submission-time gate is missing from the timeline.');
+    assert.ok(l.events.indexOf(warning) < l.events.indexOf(created), 'The warning should precede the payout on the timeline.');
   });
 } finally {
   globalThis.Date = RealDate;

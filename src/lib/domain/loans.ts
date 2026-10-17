@@ -338,47 +338,75 @@ async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account
   // request that queued behind another sees that request's result.
   const loan = getLoan(loanId)!;
   const payee = getBorrower(loan.borrowerId)!;
-  const gate = enforceCop(loan, payee);
   if (loan.disbursement && disbursementSettled(loan.disbursement) !== "failed") throw new Error("This loan already has a disbursement in flight or completed");
-  if (gate.verdict === "unavailable") pushEvent(loan, "disbursement.cop_unavailable", `Disbursing without a Confirmation of Payee result: ${gate.detail}. Recorded, not assumed.`, "warning");
+
+  // Two different questions, answered in this order:
+  //   1. "What happened to the payout we may already have sent?" — if an earlier
+  //      attempt got no answer, look it up at Zepto first, whatever Confirmation of
+  //      Payee says now. If it exists the money has moved; adopting the record is
+  //      reconciliation, not a new payment, and no gate may stand in its way.
+  //   2. "May a new payout go?" — only after (1) finds nothing is the CoP gate the
+  //      deciding question, and it applies to a replay of the old key exactly as it
+  //      would to a fresh request, because a request that never reached Zepto is a
+  //      new payment to whatever account the payee has now.
+  if (loan.disbursementIntent) {
+    const found = await recoverDisbursementIntent(loan);
+    if (found) {
+      settle(loan);
+      return loan;
+    }
+  }
+
+  // The early gate only refuses (held / unchecked); its verdict is not recorded,
+  // because the one that matters is taken again immediately before the request
+  // leaves, below.
+  enforceCop(loan, payee);
   const borrower = await ensureContact(payee);
   const z = getZepto();
 
-  // Reuse an unresolved intent (the previous attempt got no answer); otherwise mint one.
+  // Reuse an unresolved intent (the previous attempt got no answer and the lookup
+  // found nothing at Zepto); otherwise prepare a fresh one. Nothing is persisted yet.
   let intent = loan.disbursementIntent ?? null;
+  const f = intent ? null : await withApiContext(`${loan.id} · choose funding account`, funding);
+
+  // The lock serialises disbursements, not verifications: a Confirmation of Payee
+  // result can land while the contact and funding calls above are in flight. The
+  // gate is therefore enforced again here, with nothing asynchronous between this
+  // check and the request leaving, and THIS verdict is the one recorded on the
+  // intent and the timeline — it is the decision the payout actually goes out under.
+  // A refusal here leaves no intent behind: nothing was sent, nothing to reconcile.
+  const submitted = enforceCop(loan, payee);
+
   if (!intent) {
-    const f = await withApiContext(`${loan.id} · choose funding account`, funding);
-    // The lock serialises disbursements, not verifications: a Confirmation of Payee
-    // result can land while the contact and funding calls above are in flight. The
-    // gate is therefore enforced again here, with nothing asynchronous between this
-    // check and the request leaving. A recovery of an earlier unanswered intent is
-    // not re-gated: that money may already have moved, and replaying the same key
-    // cannot pay twice.
-    enforceCop(loan, payee);
     // Sandbox failures are amount-driven ($1.05 → E105, $3.03 → E303). To demo a failed
     // disbursement we send the special amount and say so loudly in the event log.
     let amount = loan.principalCents;
     if (opts.forceFailure === "de_account_not_found") amount = 105;
     if (opts.forceFailure === "npp_not_enabled") amount = 303;
-    const channels: PayoutChannel[] = opts.forceFailure === "npp_not_enabled" && f.nppCapable ? ["new_payments_platform", "direct_entry"] : f.channels;
+    const channels: PayoutChannel[] = opts.forceFailure === "npp_not_enabled" && f!.nppCapable ? ["new_payments_platform", "direct_entry"] : f!.channels;
     const attempt = (loan.disbursementAttempts ?? 0) + 1;
     intent = {
       key: `brolga-${runId()}-${loan.id.toLowerCase()}-disburse-${attempt}`,
       attempt,
       amountCents: amount,
       channels,
-      fromBankAccountId: f.account.id,
-      fundingLabel: f.label,
+      fromBankAccountId: f!.account.id,
+      fundingLabel: f!.label,
       forceFailure: opts.forceFailure,
       createdAt: new Date().toISOString(),
+      copVerdict: submitted.verdict,
       outcome: "sending",
     };
     loan.disbursementAttempts = attempt;
     loan.disbursementIntent = intent;
-    saveDb();
   } else {
-    pushEvent(loan, "disbursement.recovering", `Re-sending disbursement attempt ${intent.attempt} with the same idempotency key — the previous answer was lost`, "warning");
+    intent.copVerdict = submitted.verdict;
+    intent.outcome = "sending";
+    pushEvent(loan, "disbursement.recovering", `Re-sending disbursement attempt ${intent.attempt} with the same idempotency key — the previous answer was lost and Zepto has no record of the payout`, "warning");
   }
+  if (submitted.verdict === "unavailable") pushEvent(loan, "disbursement.cop_unavailable", `Disbursing without a Confirmation of Payee result: ${submitted.detail}. Recorded, not assumed.`, "warning");
+  // Persisted BEFORE the request goes out: if the process dies mid-call, the key survives.
+  saveDb();
 
   const adopt = (batch: { ref: string; channels: PayoutChannel[]; payouts: { ref: string; status: string }[] }) => {
     const payout = batch.payouts[0];
@@ -393,6 +421,7 @@ async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account
       fundingLabel: intent!.fundingLabel,
       failure: null,
       attempt: intent!.attempt,
+      copVerdict: intent!.copVerdict,
       createdAt: now,
       updatedAt: now,
     };
@@ -414,7 +443,9 @@ async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account
         matures_at: nowIsoSeconds(),
         channels: intent!.channels as PayoutChannel[],
         your_bank_account_id: intent!.fromBankAccountId,
-        metadata: { loan_id: loan.id, borrower_id: borrower.id, app: "brolga-credit" },
+        // intent_key lets a lost answer be reconciled by reading GET /payments,
+        // without replaying the request (see recoverDisbursementIntent).
+        metadata: { loan_id: loan.id, borrower_id: borrower.id, app: "brolga-credit", intent_key: intent!.key },
         payouts: [
           {
             amount: intent!.amountCents,
@@ -436,7 +467,7 @@ async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account
       adopt(batch);
     } else if (err instanceof ZeptoError && err.outcomeUnknown) {
       intent.outcome = "unknown";
-      pushEvent(loan, "disbursement.unknown", `No answer from Zepto for disbursement attempt ${intent.attempt} (${err.title}). The idempotency key is kept; the next attempt re-sends the same request.`, "error");
+      pushEvent(loan, "disbursement.unknown", `No answer from Zepto for disbursement attempt ${intent.attempt} (${err.title}). The idempotency key is kept; the next attempt first asks Zepto whether the payout exists.`, "error");
       settle(loan);
       throw err;
     } else {
@@ -448,6 +479,84 @@ async function disburseLocked(loanId: string, opts: { forceFailure?: "de_account
   }
   settle(loan);
   return loan;
+}
+
+// How far back GET /payments is read when looking for a lost payout. Idempotency
+// keys live 24 hours at Zepto, and a demo account makes a handful of payments a
+// day, so three pages of fifty is generous.
+const RECOVERY_PAGES = 3;
+const RECOVERY_PAGE_SIZE = 50;
+const LOOKUP_INTERVAL_MS = 30 * 1000; // the poller runs every few seconds; the lookup need not
+const SENDING_STALE_MS = 2 * 60 * 1000; // an intent still "sending" after this long belongs to a process that died mid-request
+
+/** Should the background refresh ask Zepto about this intent now? */
+export function intentNeedsLookup(intent: NonNullable<Loan["disbursementIntent"]>, now = Date.now()): boolean {
+  const lost = intent.outcome === "unknown" || intent.outcome === "unresolved" || (intent.outcome === "sending" && now - Date.parse(intent.createdAt) > SENDING_STALE_MS);
+  if (!lost) return false;
+  return !intent.lastLookupAt || now - Date.parse(intent.lastLookupAt) >= LOOKUP_INTERVAL_MS;
+}
+
+/**
+ * Find out what happened to a disbursement whose answer was lost, WITHOUT sending
+ * anything. Reads GET /payments (newest first) looking for the batch that carries
+ * this intent's key in its metadata — or, for payments made before the key was
+ * recorded, the same loan, amount and funding account created after the intent.
+ *
+ * Found: the payout is adopted and the intent cleared. Returns true.
+ * Not found: the intent is marked `unresolved` (Zepto has no record; the request
+ * probably never arrived) and the caller decides whether a replay is allowed.
+ * Returns false. Lookup errors leave the intent as it was and are rethrown.
+ */
+export async function recoverDisbursementIntent(loan: Loan): Promise<boolean> {
+  const intent = loan.disbursementIntent;
+  if (!intent) return false;
+  const z = getZepto();
+  const borrower = getBorrower(loan.borrowerId)!;
+  const since = Date.parse(intent.createdAt) - 5 * 60 * 1000; // clock skew allowance
+  let match: Awaited<ReturnType<typeof z.listPayments>>[number] | undefined;
+  await withApiContext(`${loan.id} · look for lost payout`, async () => {
+    for (let page = 1; page <= RECOVERY_PAGES && !match; page++) {
+      const batches = await z.listPayments({ page, per_page: RECOVERY_PAGE_SIZE });
+      for (const b of batches) {
+        if (b.metadata?.intent_key === intent.key) { match = b; break; }
+        const sameLoan = b.metadata?.loan_id === loan.id && b.metadata?.app === "brolga-credit" && !b.metadata?.intent_key;
+        const payout = b.payouts[0];
+        const createdAt = payout?.created_at ? Date.parse(payout.created_at) : NaN;
+        if (sameLoan && payout && payout.amount === intent.amountCents && (b.your_bank_account_id ?? intent.fromBankAccountId) === intent.fromBankAccountId && (Number.isNaN(createdAt) || createdAt >= since)) { match = b; break; }
+      }
+      if (batches.length < RECOVERY_PAGE_SIZE) break;
+    }
+  });
+  intent.lastLookupAt = new Date().toISOString();
+  if (!match) {
+    if (intent.outcome !== "unresolved") {
+      intent.outcome = "unresolved";
+      pushEvent(loan, "disbursement.unresolved", `Zepto has no record of disbursement attempt ${intent.attempt} (idempotency key ${intent.key}); the request probably never arrived. Nothing has been re-sent — a new attempt is a new payment and goes through the Confirmation of Payee gate again.`, "warning");
+    }
+    saveDb();
+    return false;
+  }
+  const payout = match.payouts[0];
+  const now = new Date().toISOString();
+  loan.disbursement = {
+    paymentRef: match.ref,
+    payoutRef: payout.ref,
+    status: payout.status,
+    channels: match.channels,
+    currentChannel: match.channels[0],
+    fromBankAccountId: intent.fromBankAccountId,
+    fundingLabel: intent.fundingLabel,
+    failure: null,
+    attempt: intent.attempt,
+    copVerdict: intent.copVerdict,
+    createdAt: payout.created_at ?? now,
+    updatedAt: now,
+  };
+  loan.disbursementIntent = null;
+  pushEvent(loan, "disbursement.recovered", `Found the payout from attempt ${intent.attempt} at Zepto (${match.ref}) — ${aud(intent.amountCents)} to ${borrower.name} had already gone out; adopted it, nothing re-sent`, "warning", match.ref);
+  loan.updatedAt = now;
+  saveDb();
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -762,6 +871,16 @@ export async function refreshLoan(loanId: string): Promise<Loan> {
   const z = getZepto();
   const borrower = getBorrower(loan.borrowerId)!;
 
+  // A disbursement whose answer was lost is reconciled here too, not only when
+  // someone clicks Disburse again: if Zepto has the payout, adopt it. This is a
+  // read, so it needs no CoP decision. Throttled, because the poller is eager.
+  const intent = loan.disbursementIntent;
+  if (intent && !loan.disbursement && intentNeedsLookup(intent)) {
+    await withLoanLock(loan.id, async () => {
+      if (loan.disbursementIntent && !loan.disbursement) await recoverDisbursementIntent(loan);
+    });
+  }
+
   await withApiContext(`${loan.id} · refresh`, async () => {
     const d = loan.disbursement;
     if (d && disbursementSettled(d) === "pending") {
@@ -895,7 +1014,7 @@ export function hasInFlight(loan: Loan): boolean {
   const d = loan.disbursement;
   if (d && disbursementSettled(d) === "pending") return true;
   if (d && disbursementSettled(d) === "failed" && !d.reversalRef && Date.now() - Date.parse(d.failedAt ?? d.updatedAt) < REVERSAL_WATCH_MS) return true;
-  if (loan.disbursementIntent?.outcome === "unknown") return true;
+  if (loan.disbursementIntent?.outcome === "unknown" || loan.disbursementIntent?.outcome === "unresolved") return true;
   const m = loan.mandate;
   if (m && (m.state === "pending" || m.state === "created" || m.pendingAmendment)) return true;
   return loan.instalments.some((i) => i.paymentUid && IN_FLIGHT_INSTALMENT_STATES.has(i.state));
