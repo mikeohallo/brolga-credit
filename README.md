@@ -1,16 +1,33 @@
 # Brolga Credit — a consumer-lending demo on Zepto
 
-> **Status:** built and verified end to end against the Zepto sandbox on 12 September 2026
-> (Direct Entry disbursement, PayTo agreement, real-time collection with failure and retry,
-> suspension, reactivation, bilateral amendment, cancellation), then independently reviewed
-> and hardened over the following two days. A second independent review on 16 October
-> found a race in the disbursement path and a gap in the Confirmation of Payee gate; both
-> are fixed and covered by new checks (see [Tests](#tests)). A third assessment on
-> 17 October found that a lost payout answer followed by a Confirmation of Payee hold
-> could not be reconciled; fixed the same day. A demo, not a product.
-
 [![CI](https://github.com/mikeohallo/brolga-credit/actions/workflows/ci.yml/badge.svg)](https://github.com/mikeohallo/brolga-credit/actions/workflows/ci.yml)
 MIT licence.
+
+**For** a loan officer at a small lender who has to move money and know, at every step,
+what actually happened. **It does** the loan desk's work against the Zepto payments API:
+verify a bank account, pay the loan out, set up a PayTo repayment agreement, collect
+instalments, and handle what comes after (missed payments, hardship pauses, restructures,
+payoff). Every step is a real API call; nothing is faked when it's pointed at the sandbox.
+A demo, not a product.
+
+**Try it in five minutes:** `npm install && npm run build && npm start`, then open
+`http://localhost:3000`. With no `.env.local` it runs in mock mode: no token, no network.
+`scripts/walkthrough.mjs` drives the whole demo and screenshots each step.
+
+**What's measured:** built and verified end to end against the Zepto sandbox on
+12 September 2026 (Direct Entry disbursement, PayTo agreement, real-time collection with
+failure and retry, suspension, reactivation, bilateral amendment, cancellation). 53 offline
+checks run the real domain code against a mock provider with a controllable clock, on
+every push (badge above). Three independent reviews shaped them. The first review's harness
+passed 14 of its 36 checks on its first run and became the regression suite. The second and
+third found eight more cases it didn't cover, among them two overlapping disbursements
+creating two payouts, and a lost payout answer left unreconciled behind a Confirmation of
+Payee hold. T46 to T53 reproduce them: each fails on the old code and passes on the fix.
+
+**Where the AI is:** nowhere in the product. No model runs when money moves. Claude wrote
+the code and the tests under a product owner's direction, and sessions with no part in
+writing it reviewed it. The hardest findings were about uncertainty: a payment whose
+outcome is unknown must never be retried as if it had failed.
 
 ![Brolga Credit loan page — repayment schedule, disbursement with debit and credit refs, PayTo agreement with lifecycle actions](docs/loan-page.png)
 
@@ -191,8 +208,9 @@ Two habits mattered more than any prompt. Every money-moving step was persisted
 before it was sent, so a lost answer could be recovered rather than guessed at.
 And the code was reviewed by a session that had no part in writing it: the first
 review's harness failed 22 of its 36 checks and became the test suite; the second,
-a month later, found a race and a gating gap that the first had missed. Both
-reviews are in the history.
+a month later, found a race and a gating gap that the first had missed; the third,
+the next day, found a lost payout answer stranded behind a Confirmation of Payee hold.
+All three are in the history.
 
 ## Things learned about the Zepto API while building this
 
