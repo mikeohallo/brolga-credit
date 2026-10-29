@@ -1,17 +1,17 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-10-29T02:38:21.286Z",
+  "executedAt": "2026-10-29T03:34:16.596Z",
   "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
   "network": {
     "mode": "mock",
     "credentialUsed": false,
-    "blockedRealFetchAttempts": 1,
+    "blockedRealFetchAttempts": 2,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 59,
-  "passed": 59,
+  "total": 63,
+  "passed": 63,
   "failed": 0,
   "results": [
     {
@@ -861,6 +861,74 @@
           "T5-02",
           "T6-04"
         ]
+      }
+    },
+    {
+      "id": "T60",
+      "name": "The Investigate routes read the investigator's own file and touch nothing else",
+      "expectation": "The list names every case with its type, held-back flag and counts, says whether a key is configured without ever carrying one, and offers the three models with prices; one case comes back with its records in id order, the exact rendering and its hash, and no briefing yet; an unknown case is 404, a missing file is 404 naming the cases script; neither read changes the investigator file or the loan store.",
+      "result": "PASS",
+      "observations": {
+        "cases": 10,
+        "heldBack": [
+          "T1-03",
+          "T1-06",
+          "T1-09"
+        ],
+        "models": [
+          "claude-haiku-5-5",
+          "claude-sonnet-5-5",
+          "claude-opus-5-5"
+        ],
+        "hash": "058b7bb39bd2863f",
+        "words": 679
+      }
+    },
+    {
+      "id": "T61",
+      "name": "Write briefing refuses without a key and never reaches the network; with the key the scripts would read, it makes exactly one blocked call and records the failure",
+      "expectation": "Without a key the brief route answers 400 naming the variable, records nothing and makes no network attempt; an unknown model and a held-back case are refused the same way; with BROLGA_INVESTIGATOR_KEY in the file BROLGA_ENV_FILE names, the route finds it exactly as scripts/investigate-lib.mjs does, makes one call that the suite's guard blocks, records the run as a failed call stamped with the file's hash and the model, and no response or file ever carries the key.",
+      "result": "PASS",
+      "observations": {
+        "noKeyStatus": 400,
+        "heldBackStatus": 403,
+        "blockedCalls": 1,
+        "recorded": {
+          "error": "REVIEW_NETWORK_DISABLED",
+          "model": "claude-haiku-5-5",
+          "caseHash": "d5e3afa3e340d818"
+        }
+      }
+    },
+    {
+      "id": "T62",
+      "name": "Through the routes, new evidence continues the numbering and changes the hash, and a mark names one exact briefing on one exact file",
+      "expectation": "The evidence route appends the next prepared record with the next id for its source, leaves every earlier id in place, changes the rendering's hash and counts down what is left, then answers 409 when nothing is left; the mark route refuses an unknown briefing, an unknown verdict and a rejected briefing, and stores a verdict with its trimmed note, who gave it, the run id, the hash that run saw and the model; the loan store is untouched throughout.",
+      "result": "PASS",
+      "observations": {
+        "added": "P3",
+        "hashBefore": "cb74efc606845993",
+        "hashAfter": "93b29ae170cc5151",
+        "exhaustedStatus": 409,
+        "mark": {
+          "at": "2026-11-26T22:43:53.400Z",
+          "by": "reviewer",
+          "verdict": "incomplete",
+          "note": "Missed the borrower note.",
+          "runId": "T1-01-run-11-20261126224353",
+          "caseHash": "93b29ae170cc5151",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "id": "T63",
+      "name": "BROLGA_INVESTIGATOR_STORE moves the investigator's file, so cases, briefings and marks can outlive a fresh copy of the repo",
+      "expectation": "With the variable set to an absolute path, the scripts (which pass the repo root) and the server (which uses its working directory) resolve the same file, the cases are written there and nowhere else, and the routes read them from there; a relative value resolves against the caller's root; with the variable unset the default file in data/ is back, and its absence is reported as \"no cases yet\".",
+      "result": "PASS",
+      "observations": {
+        "configured": "elsewhere/investigator.mock.json",
+        "defaultFile": "data/investigator.mock.json"
       }
     }
   ]

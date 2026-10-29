@@ -16,7 +16,7 @@ A demo, not a product.
 
 **What's measured:** built and verified end to end against the Zepto sandbox on
 12 September 2026 (Direct Entry disbursement, PayTo agreement, real-time collection with
-failure and retry, suspension, reactivation, bilateral amendment, cancellation). 53 offline
+failure and retry, suspension, reactivation, bilateral amendment, cancellation). 63 offline
 checks run the real domain code against a mock provider with a controllable clock, on
 every push (badge above). Three independent reviews shaped them. The first review's harness
 passed 14 of its 36 checks on its first run and became the regression suite. The second and
@@ -74,6 +74,30 @@ to rehearse the whole demo offline. Each mode keeps its own store
 switching modes shows a different set of loans rather than pretending the
 sandbox references can be resumed offline.
 
+### The Investigate tab
+
+Operations has a fourth tab, **Investigate**: the Payments Exception Investigator.
+It needs one more command before `npm start`, to make its sixty synthetic cases
+(six kinds of thing that go wrong with a payment, ten of each, made by running
+the real code against the mock under a fixed clock, so every machine makes the
+same files):
+
+```bash
+node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs
+```
+
+Pick a case, read the records beside the briefing, click a cited id to see the
+record behind it, add the prepared evidence and write again, and mark the
+briefing right, wrong or incomplete. Writing a briefing is one model call made by
+the server with the key in `.env.local` as `BROLGA_INVESTIGATOR_KEY`; without a
+key the tab shows the cases and says so. Twenty of the sixty are held back: the
+tab shows them but will not write on them, because they are run only once, by
+the eval script, for the numbers that will go at the top of this file. The
+model never moves money, never calls the provider and sees nothing but the case
+file; code checks every citation before a briefing is shown, and a person decides.
+`BROLGA_INVESTIGATOR_STORE` moves the investigator's file (cases, briefings,
+marks) out of `data/` if you want it somewhere that outlives a checkout.
+
 ## The story the demo tells
 
 1. **Verify** — `POST /cop/account/validate` (Confirmation of Payee) checks the
@@ -101,8 +125,11 @@ src/lib/domain/     the lending logic: quotes, schedules, state transitions, pol
 src/lib/db.ts       a JSON-file store, one file per mode — one operator, one process, no database
 src/app/api/        route handlers the UI calls; the token never reaches the browser
 src/app/            the screens (Next.js App Router, client components, Tailwind)
+src/lib/investigator/  the Payments Exception Investigator: case files, the briefing shape,
+                    the citation check, six case generators, one model call; the key stays server-side
 tests/review/       offline invariant suite that drives the domain layer against the mock
-scripts/            Playwright walkthrough that screenshots the whole demo
+scripts/            Playwright walkthrough that screenshots the whole demo; the investigator's
+                    cases, demo and evaluation scripts
 ```
 
 Design choices worth knowing:
@@ -162,7 +189,7 @@ Design choices worth knowing:
 node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json
 ```
 
-Fifty-three checks run the real domain code and route handlers against the mock
+Sixty-three checks run the real domain code and route handlers against the mock
 provider with a controllable clock and no network: schedule arithmetic, the
 credit-is-the-truth disbursement rule, collection gating, lost-response
 recovery for both payouts and PayTo payments, restructure reconciliation,
@@ -190,6 +217,11 @@ payout found; lost answer then a hold with nothing found; a match that turns
 unavailable before submission). They fail on the code as it was and pass on the
 fix. The same workflow now runs on every push to this repository — see the badge
 above and `.github/workflows/ci.yml`; it holds no secrets and makes no Zepto calls.
+
+T54 to T63 cover the Payments Exception Investigator: the case file and its ids, the
+citation check, the scoring, the six case generators and the sixty-case set, and the
+Investigate tab's routes. They drive the whole pipeline with canned answers and prove
+the real model path is blocked offline; the suite never calls a model.
 
 `CHROME_PATH=<chromium> node scripts/walkthrough.mjs http://localhost:3000 ./shots`
 drives the whole demo in a browser and saves a screenshot of each step.

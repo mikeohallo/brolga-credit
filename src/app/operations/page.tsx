@@ -5,28 +5,30 @@ import { useResource } from "@/lib/client";
 import { Card, PageHeader, Pill, Money, Mono, Spinner, ErrorBanner, Empty, PAYOUT_STATUS, INSTALMENT_STATUS } from "@/components/ui";
 import type { Transaction, PaytoPayment, Webhook, WebhookDelivery } from "@/lib/zepto/types";
 import { dateTime } from "@/lib/format";
+import { Investigate } from "@/components/Investigate";
 
 type LabelledTransaction = Transaction & { side: string };
 
-type Tab = "ledger" | "payto" | "webhooks";
+type Tab = "ledger" | "payto" | "webhooks" | "investigate";
 
 export default function Operations() {
   const [tab, setTab] = useState<Tab>("ledger");
   return (
     <>
       <PageHeader kicker="Back office" title="Operations">
-        The reconciliation view: what Zepto&rsquo;s ledger says, independent of what Brolga believes. Two API generations sit side by side here — legacy payouts with <Mono>D.*</Mono> refs and page numbers, PayTo with UUIDs and cursors.
+        The reconciliation view: what Zepto&rsquo;s ledger says, independent of what Brolga believes. Two API generations sit side by side here — legacy payouts with <Mono>D.*</Mono> refs and page numbers, PayTo with UUIDs and cursors. Under Investigate, the Payments Exception Investigator reads a case file and writes a briefing; a person decides.
       </PageHeader>
       <div className="mb-4 flex gap-1 rounded-xl bg-neutral-soft p-1 text-sm">
-        {(["ledger", "payto", "webhooks"] as Tab[]).map((t) => (
+        {(["ledger", "payto", "webhooks", "investigate"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 font-medium transition ${tab === t ? "bg-surface shadow-sm" : "text-ink-2 hover:text-ink"}`}>
-            {t === "ledger" ? "Payout ledger" : t === "payto" ? "PayTo payments" : "Webhooks"}
+            {t === "ledger" ? "Payout ledger" : t === "payto" ? "PayTo payments" : t === "webhooks" ? "Webhooks" : "Investigate"}
           </button>
         ))}
       </div>
       {tab === "ledger" && <Ledger />}
       {tab === "payto" && <Payto />}
       {tab === "webhooks" && <Webhooks />}
+      {tab === "investigate" && <Investigate />}
     </>
   );
 }

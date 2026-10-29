@@ -1,4 +1,6 @@
-// Generate the investigator's synthetic cases into data/investigator.mock.json.
+// Generate the investigator's synthetic cases into data/investigator.mock.json
+// (or the file BROLGA_INVESTIGATOR_STORE names; the app's Investigate tab and the
+// other scripts read the same variable, so they all agree on where the cases are).
 //
 //   node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs [--render [dir]]
 //
@@ -20,7 +22,6 @@ import { reportsDir } from './investigate-lib.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const renderDir = args.includes('--render') ? path.resolve(root, args[args.indexOf('--render') + 1] ?? path.join(reportsDir(), 'cases')) : null;
-const outFile = path.join(root, 'data', 'investigator.mock.json');
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brolga-investigator-gen-'));
 process.chdir(stateDir);
@@ -45,7 +46,8 @@ const source = (name) => import(pathToFileURL(path.join(root, name)));
 const db = await source('src/lib/db.ts');
 const { resetMock } = await source('src/lib/zepto/mock.ts');
 const { generateAllCases, GENERATOR } = await source('src/lib/investigator/cases/index.ts');
-const { saveStore, renderCase } = await source('src/lib/investigator/store.ts');
+const { saveStore, renderCase, storePath } = await source('src/lib/investigator/store.ts');
+const outFile = storePath(root);
 
 try {
   resetMock();

@@ -5,7 +5,9 @@
 // 2026 (concurrent disbursement, late CoP results, error-field redaction) and
 // T49–T50 after its re-check (CoP arriving mid-disbursement, account numbers in
 // logged paths), and T51–T53 after the third assessment of 17 October (lost payout
-// answer reconciled ahead of the CoP gate; the verdict recorded at submission). Runs
+// answer reconciled ahead of the CoP gate; the verdict recorded at submission), T54–T59
+// for the Payments Exception Investigator's spine and its six case generators, and
+// T60–T63 for the Investigate tab's server routes (29 Oct 2026). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -856,6 +858,178 @@ try {
     assert.ok(!/cop-hold/.test(text('T4-02')) && /credit C\.\w+ status "cleared"/.test(text('T4-02')) && /result "no match"/.test(text('T4-02')), 'T4-02 should be a cleared payout with a later no-match and no hold');
     assert.ok(/carrying loan reference LN-0021 and intent key/.test(text('T3-01')) && /Status recorded by the app: verified/.test(text('T3-01')), 'T3-01 should show the provider batch for an undisbursed loan');
     note({ checked: ['T2-01', 'T2-04', 'T3-01', 'T4-01', 'T4-02', 'T5-01', 'T5-02', 'T6-04'] });
+  });
+  // T60–T63: the Investigate tab's server routes (slice 2 commit B, 29 Oct 2026).
+  // The routes read and write the investigator's own file and nothing else; the
+  // model is called only from the brief route, with the key the scripts use, and
+  // the suite's network guard proves that call never leaves the machine offline.
+  const invRoutes = {
+    list: await source('src/app/api/investigate/route.ts'),
+    one: await source('src/app/api/investigate/[id]/route.ts'),
+    brief: await source('src/app/api/investigate/[id]/brief/route.ts'),
+    evidence: await source('src/app/api/investigate/[id]/evidence/route.ts'),
+    mark: await source('src/app/api/investigate/[id]/mark/route.ts'),
+  };
+  const allCases = await source('src/lib/investigator/cases/index.ts');
+  const tenCases = async () => {
+    const cases = allCases.markHeldBack(await inv.timeout.generateTimeoutCases({ advance }));
+    inv.store.saveStore({ version: 1, generatedAt: new Date().toISOString(), generator: 'suite', cases });
+    return cases;
+  };
+  const getCase = async (id) => invRoutes.one.GET(request(`/api/investigate/${id}`), params(id));
+  await test('T60', 'The Investigate routes read the investigator\'s own file and touch nothing else', 'The list names every case with its type, held-back flag and counts, says whether a key is configured without ever carrying one, and offers the three models with prices; one case comes back with its records in id order, the exact rendering and its hash, and no briefing yet; an unknown case is 404, a missing file is 404 naming the cases script; neither read changes the investigator file or the loan store.', async () => {
+    const cases = await tenCases();
+    const file = inv.store.storePath();
+    const bytesBefore = fs.readFileSync(file, 'utf8');
+    const dbBefore = JSON.stringify(db.loadDb());
+    const listRes = await invRoutes.list.GET();
+    assert.equal(listRes.status, 200);
+    const list = await listRes.json();
+    assert.equal(list.cases.length, cases.length);
+    assert.deepEqual(list.cases.filter((c) => c.heldBack).map((c) => c.id), ['T1-03', 'T1-06', 'T1-09']);
+    assert.ok(list.cases.every((c) => c.typeCode === 'T1' && c.briefings === 0 && c.marks === 0 && c.records > 0));
+    assert.equal(list.keyPresent, false);
+    assert.deepEqual(list.models.map((m) => m.id), ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
+    assert.ok(list.models.every((m) => m.inputUsdPerMtok > 0 && m.outputUsdPerMtok > 0));
+    const oneRes = await getCase('T1-01');
+    assert.equal(oneRes.status, 200);
+    const c = (await oneRes.json()).case;
+    assert.equal(c.id, 'T1-01');
+    assert.equal(c.typeTitle, 'Unknown outcome after a timeout');
+    assert.deepEqual(c.records.map((r) => r.id), cases[0].records.map((r) => r.id));
+    assert.equal(c.rendered.hash, inv.store.renderCase(cases[0]).hash);
+    assert.ok(c.rendered.text.startsWith('CASE T1-01') && c.rendered.text.endsWith('END OF CASE FILE'));
+    assert.equal(c.runs.length, 0);
+    assert.equal(c.marks.length, 0);
+    assert.equal(c.evidenceLeft, cases[0].preparedEvidence.length);
+    assert.equal((await getCase('T9-99')).status, 404);
+    assert.equal(fs.readFileSync(file, 'utf8'), bytesBefore);
+    assert.equal(JSON.stringify(db.loadDb()), dbBefore);
+    fs.rmSync(file);
+    const none = await invRoutes.list.GET();
+    assert.equal(none.status, 404);
+    assert.ok(/investigate-cases\.mjs/.test((await none.json()).error.detail));
+    note({ cases: list.cases.length, heldBack: list.cases.filter((c) => c.heldBack).map((c) => c.id), models: list.models.map((m) => m.id), hash: c.rendered.hash, words: c.rendered.wordCount });
+  });
+  await test('T61', 'Write briefing refuses without a key and never reaches the network; with the key the scripts would read, it makes exactly one blocked call and records the failure', 'Without a key the brief route answers 400 naming the variable, records nothing and makes no network attempt; an unknown model and a held-back case are refused the same way; with BROLGA_INVESTIGATOR_KEY in the file BROLGA_ENV_FILE names, the route finds it exactly as scripts/investigate-lib.mjs does, makes one call that the suite\'s guard blocks, records the run as a failed call stamped with the file\'s hash and the model, and no response or file ever carries the key.', async () => {
+    const cases = await tenCases();
+    const file = inv.store.storePath();
+    const envBefore = process.env.BROLGA_INVESTIGATOR_KEY;
+    delete process.env.BROLGA_INVESTIGATOR_KEY;
+    const blockedBefore = blockedNetworkAttempts();
+    const briefReq = (id, model) => invRoutes.brief.POST(request(`/api/investigate/${id}/brief`, { model }), params(id));
+    try {
+      const noKey = await briefReq('T1-01', 'claude-opus-5-5');
+      assert.equal(noKey.status, 400);
+      assert.ok(/BROLGA_INVESTIGATOR_KEY/.test((await noKey.json()).error.detail));
+      assert.equal(blockedNetworkAttempts(), blockedBefore);
+      assert.equal(inv.store.loadStore(file).cases[0].runs.length, 0);
+      const envFile = path.join(stateDir, 'elsewhere.env.local');
+      fs.writeFileSync(envFile, '# a test env file\nZEPTO_MODE=mock\nBROLGA_INVESTIGATOR_KEY="not-a-key"\n');
+      process.env.BROLGA_ENV_FILE = envFile;
+      const lib = await import(pathToFileURL(path.join(root, 'scripts/investigate-lib.mjs')).href);
+      const modelModule = await source('src/lib/investigator/model.ts');
+      assert.equal(lib.readKey('BROLGA_INVESTIGATOR_KEY'), 'not-a-key');
+      assert.equal(modelModule.readKey(), lib.readKey('BROLGA_INVESTIGATOR_KEY'));
+      assert.equal((await briefReq('T1-01', 'claude-9')).status, 400);
+      const held = await briefReq('T1-03', 'claude-opus-5-5');
+      assert.equal(held.status, 403);
+      assert.ok(/held back/.test((await held.json()).error.detail));
+      assert.equal(blockedNetworkAttempts(), blockedBefore);
+      assert.equal(inv.store.loadStore(file).cases.find((c) => c.id === 'T1-03').runs.length, 0);
+      const res = await briefReq('T1-01', 'claude-haiku-5-5');
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(blockedNetworkAttempts(), blockedBefore + 1);
+      const run = body.case.runs[0];
+      assert.equal(run.error, 'REVIEW_NETWORK_DISABLED');
+      assert.equal(run.briefing, null);
+      assert.equal(run.model, 'claude-haiku-5-5');
+      assert.equal(run.caseHash, body.case.rendered.hash);
+      assert.ok(!run.check.accepted);
+      assert.ok(!JSON.stringify(body).includes('not-a-key'));
+      const saved = inv.store.loadStore(file).cases[0];
+      assert.equal(saved.runs.length, 1);
+      assert.equal(saved.runs[0].error, 'REVIEW_NETWORK_DISABLED');
+      assert.ok(!fs.readFileSync(file, 'utf8').includes('not-a-key'));
+      const list = await (await invRoutes.list.GET()).json();
+      assert.equal(list.keyPresent, true);
+      assert.ok(!JSON.stringify(list).includes('not-a-key'));
+      assert.equal(list.cases[0].briefings, 1);
+      assert.equal(list.cases[0].accepted, 0);
+      note({ noKeyStatus: noKey.status, heldBackStatus: held.status, blockedCalls: blockedNetworkAttempts() - blockedBefore, recorded: { error: run.error, model: run.model, caseHash: run.caseHash } });
+    } finally {
+      delete process.env.BROLGA_ENV_FILE;
+      if (envBefore !== undefined) process.env.BROLGA_INVESTIGATOR_KEY = envBefore;
+    }
+  });
+  await test('T62', 'Through the routes, new evidence continues the numbering and changes the hash, and a mark names one exact briefing on one exact file', 'The evidence route appends the next prepared record with the next id for its source, leaves every earlier id in place, changes the rendering\'s hash and counts down what is left, then answers 409 when nothing is left; the mark route refuses an unknown briefing, an unknown verdict and a rejected briefing, and stores a verdict with its trimmed note, who gave it, the run id, the hash that run saw and the model; the loan store is untouched throughout.', async () => {
+    await tenCases();
+    const file = inv.store.storePath();
+    const dbBefore = JSON.stringify(db.loadDb());
+    const before = (await (await getCase('T1-01')).json()).case;
+    const ids = before.records.map((r) => r.id);
+    const lastP = Math.max(...ids.filter((i) => i[0] === 'P').map((i) => Number(i.slice(1))));
+    const evidenceReq = () => invRoutes.evidence.POST(request('/api/investigate/T1-01/evidence', {}), params('T1-01'));
+    const evRes = await evidenceReq();
+    assert.equal(evRes.status, 200);
+    const after = (await evRes.json()).case;
+    assert.deepEqual(after.records.map((r) => r.id), [...ids, `P${lastP + 1}`]);
+    assert.equal(after.records.at(-1).evidence?.label?.length > 0, true);
+    assert.notEqual(after.rendered.hash, before.rendered.hash);
+    assert.equal(after.evidenceLeft, before.evidenceLeft - 1);
+    let last;
+    for (let i = 0; i < 6; i++) { last = await evidenceReq(); if (last.status !== 200) break; }
+    assert.equal(last.status, 409);
+    const store = inv.store.loadStore(file);
+    const c = store.cases.find((x) => x.id === 'T1-01');
+    const sound = soundBriefing(c);
+    const okRun = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(sound) });
+    const madeUp = structuredClone(sound); madeUp.known_for_certain.push({ text: 'The provider confirmed settlement.', ids: ['P99'] });
+    const badRun = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(madeUp) });
+    assert.ok(okRun.check.accepted && !badRun.check.accepted);
+    inv.store.saveStore(store, file);
+    const markReq = (body) => invRoutes.mark.POST(request('/api/investigate/T1-01/mark', body), params('T1-01'));
+    assert.equal((await markReq({ runId: 'no-such-run', verdict: 'right' })).status, 404);
+    assert.equal((await markReq({ runId: okRun.id, verdict: 'maybe' })).status, 400);
+    assert.equal((await markReq({ runId: badRun.id, verdict: 'wrong' })).status, 400);
+    assert.equal((await markReq({ verdict: 'right' })).status, 400);
+    assert.equal(inv.store.loadStore(file).cases.find((x) => x.id === 'T1-01').marks.length, 0);
+    const marked = await markReq({ runId: okRun.id, verdict: 'incomplete', note: '  Missed the borrower note.  ', by: 'reviewer' });
+    assert.equal(marked.status, 200);
+    const m = (await marked.json()).case.marks[0];
+    assert.deepEqual({ verdict: m.verdict, note: m.note, by: m.by, runId: m.runId, caseHash: m.caseHash, model: m.model }, { verdict: 'incomplete', note: 'Missed the borrower note.', by: 'reviewer', runId: okRun.id, caseHash: okRun.caseHash, model: 'claude-opus-5-5' });
+    assert.equal(okRun.caseHash, after.rendered.hash);
+    const saved = inv.store.loadStore(file).cases.find((x) => x.id === 'T1-01');
+    assert.equal(saved.marks.length, 1);
+    assert.equal(saved.marks[0].caseHash, okRun.caseHash);
+    assert.equal(JSON.stringify(db.loadDb()), dbBefore);
+    note({ added: `P${lastP + 1}`, hashBefore: before.rendered.hash, hashAfter: after.rendered.hash, exhaustedStatus: last.status, mark: m });
+  });
+  await test('T63', 'BROLGA_INVESTIGATOR_STORE moves the investigator\'s file, so cases, briefings and marks can outlive a fresh copy of the repo', 'With the variable set to an absolute path, the scripts (which pass the repo root) and the server (which uses its working directory) resolve the same file, the cases are written there and nowhere else, and the routes read them from there; a relative value resolves against the caller\'s root; with the variable unset the default file in data/ is back, and its absence is reported as "no cases yet".', async () => {
+    const defaultPath = inv.store.storePath();
+    fs.rmSync(defaultPath, { force: true }); // T60–T62 wrote the default file in this state directory
+    const elsewhere = path.join(stateDir, 'elsewhere', 'investigator.mock.json');
+    process.env.BROLGA_INVESTIGATOR_STORE = elsewhere;
+    try {
+      assert.equal(inv.store.storePath(), elsewhere);
+      assert.equal(inv.store.storePath(root), elsewhere);
+      const cases = await tenCases();
+      assert.ok(fs.existsSync(elsewhere), 'the cases were not written to the configured file');
+      assert.ok(!fs.existsSync(defaultPath), 'the default file was written although the variable was set');
+      const list = await (await invRoutes.list.GET()).json();
+      assert.equal(list.cases.length, cases.length);
+      process.env.BROLGA_INVESTIGATOR_STORE = path.join('runs', 'x', 'investigator.json');
+      assert.equal(inv.store.storePath(root), path.resolve(root, 'runs', 'x', 'investigator.json'));
+      assert.equal(inv.store.storePath(), path.resolve(process.cwd(), 'runs', 'x', 'investigator.json'));
+    } finally {
+      delete process.env.BROLGA_INVESTIGATOR_STORE;
+    }
+    assert.equal(inv.store.storePath(), defaultPath);
+    const none = await invRoutes.list.GET();
+    assert.equal(none.status, 404);
+    assert.ok(/No cases yet/.test((await none.json()).error.detail));
+    note({ configured: path.relative(stateDir, elsewhere), defaultFile: path.relative(stateDir, defaultPath) });
   });
 } finally {
   globalThis.Date = RealDate;

@@ -31,9 +31,17 @@ this file never do.
 
 - `npm ci` (never `npm install`; the lockfile is the record of what runs).
 - `node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json`
-  — expect 59 passed, 0 failed; stop on any failure (one blocked network attempt is
-  expected: T57 proves the model path is blocked offline).
+  — expect 63 passed, 0 failed; stop on any failure (two blocked network attempts are
+  expected: T57 and T61 prove the model path is blocked offline).
 - Build: `npm run build`. Run: `npm start` (binds to 127.0.0.1; never add `-H 0.0.0.0`).
+  A `run` line on the `investigator` branch keeps the run folder while the app runs
+  (the app is served from it; nothing is deleted at the end of the line), and runs
+  `scripts/investigate-cases.mjs` before `npm start` so the Investigate tab has its
+  sixty cases (the fake clock the cases need cannot run inside the server). The server
+  reads the same three variables the scripts do: `BROLGA_ENV_FILE` (the file the key is
+  in), `BROLGA_INVESTIGATOR_STORE` (where the cases, briefings and marks file lives;
+  Mike's line sets it to a path under `runs\` so his marks outlive the run folder) and
+  `BROLGA_REPORTS_DIR`.
 - Walkthrough: `node scripts/walkthrough.mjs http://127.0.0.1:3000 ./shots` with
   `CHROME_PATH` set to a Chromium binary, in `mock` mode unless Mike's line says sandbox.
 - Investigator (`evaluate`): `node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs --render`
@@ -41,10 +49,11 @@ this file never do.
   `scripts/investigate-demo.mjs` and `scripts/investigate-eval.mjs` with the case, set
   (`--set dev|heldback|all`), model and trials Mike's line names. They read
   `BROLGA_INVESTIGATOR_KEY` from `.env.local` (or the file `BROLGA_ENV_FILE` names) and
-  write reports to `reports/` (or `BROLGA_REPORTS_DIR`); only the model calls leave the
-  machine. The held-back set is run only when Mike's line says so. Report the case
-  hashes, the demo file's path and the eval summary; never print `.env.local`, the key
-  or a report in full.
+  write reports to `reports/` (or `BROLGA_REPORTS_DIR`) and read and write the cases
+  file at `data/investigator.mock.json` (or `BROLGA_INVESTIGATOR_STORE`); only the model
+  calls leave the machine. The held-back set is run only when Mike's line says so, and
+  only by the eval script (the tab refuses it). Report the case hashes, the demo file's
+  path and the eval summary; never print `.env.local`, the key or a report in full.
 
 ## Never
 
