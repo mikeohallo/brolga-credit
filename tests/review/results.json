@@ -1,17 +1,17 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-10-17T13:12:56.082Z",
-  "runtime": "v22.22.0",
+  "executedAt": "2026-10-29T01:12:23.590Z",
+  "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
   "network": {
     "mode": "mock",
     "credentialUsed": false,
-    "blockedRealFetchAttempts": 0,
+    "blockedRealFetchAttempts": 1,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 53,
-  "passed": 53,
+  "total": 57,
+  "passed": 57,
   "failed": 0,
   "results": [
     {
@@ -695,6 +695,115 @@
         "recordedVerdict": "unavailable",
         "warningOnTimeline": true,
         "warningBeforeCreated": true
+      }
+    },
+    {
+      "id": "T54",
+      "name": "Investigator case files are complete, labelled and repeatable",
+      "expectation": "Every generated timeout case has an id on every record, a labelled instalment left in the unknown state, required-citation ids that exist, no provider record stating the lost payment's state in the timed-out variants, and a rendering that hashes the same twice.",
+      "result": "PASS",
+      "observations": {
+        "cases": 10,
+        "timedOutVariants": 4,
+        "words": [
+          682,
+          592,
+          610,
+          685,
+          573,
+          635,
+          584,
+          636,
+          600,
+          597
+        ],
+        "hashes": {
+          "T1-01": "a85eddf77aabfaa6",
+          "T1-02": "35e96f5426956abe",
+          "T1-03": "e1e245e5a2a6c181",
+          "T1-04": "9b938af86d080b9e",
+          "T1-05": "cba3fd76570df468",
+          "T1-06": "f76ad99fd41246b5",
+          "T1-07": "bfcbec17d95ae3d9",
+          "T1-08": "73ce11e585a7c695",
+          "T1-09": "aaabb63e37bbea9c",
+          "T1-10": "5d0d855baab8a1fd"
+        }
+      }
+    },
+    {
+      "id": "T55",
+      "name": "The citation check rejects what the records do not support",
+      "expectation": "A briefing citing an id that is not in the case file, or a claim with no id, is rejected whole; a briefing whose every claim cites real records is accepted.",
+      "result": "PASS",
+      "observations": {
+        "accepted": true,
+        "costUsd": 0.01,
+        "madeUpIds": [
+          "P9"
+        ],
+        "bareUncited": 1,
+        "reasons": [
+          "known_for_certain[1]: cites P9, which is not in the case file",
+          "timeline[1]: cites no record"
+        ]
+      }
+    },
+    {
+      "id": "T56",
+      "name": "A briefing that calls a timeout failed is scored wrong; one that says insufficient evidence is scored right",
+      "expectation": "On the demo case the label is outcome_unknown / insufficient_evidence; a confident \"failed, retry it\" briefing scores zero on diagnosis and next step even though its citations are real, and an unknown label or a diagnosis that is not the rank-1 explanation is a shape rejection.",
+      "result": "PASS",
+      "observations": {
+        "right": {
+          "accepted": true,
+          "rejectedForShape": false,
+          "rejectedForCitations": false,
+          "diagnosisCorrect": true,
+          "nextStepCorrect": true,
+          "citedMustCite": true,
+          "saidInsufficient": true,
+          "expectedInsufficient": true,
+          "unsupportedClaims": 0,
+          "claims": 4
+        },
+        "wrong": {
+          "accepted": true,
+          "rejectedForShape": false,
+          "rejectedForCitations": false,
+          "diagnosisCorrect": false,
+          "nextStepCorrect": false,
+          "citedMustCite": true,
+          "saidInsufficient": false,
+          "expectedInsufficient": true,
+          "unsupportedClaims": 0,
+          "claims": 4
+        },
+        "shapeErrors": [
+          [
+            "unknown diagnosis label \"failed\""
+          ],
+          [
+            "diagnosis \"settled_at_provider\" is not the rank-1 explanation \"outcome_unknown\""
+          ],
+          [
+            "the answer is not a JSON object"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "T57",
+      "name": "New evidence extends the case file without disturbing it, and no model is ever called offline",
+      "expectation": "Adding the prepared provider record gives it the next id for its source, leaves every earlier id and record unchanged, changes the hash the next briefing is stamped with, and the real model path is blocked by the suite's network guard.",
+      "result": "PASS",
+      "observations": {
+        "added": "P3",
+        "lastProviderIdBefore": "P2",
+        "hashBefore": "52f768addde01eb3",
+        "hashAfter": "1e4171da00f51753",
+        "realCallError": "REVIEW_NETWORK_DISABLED",
+        "blockedFetches": 1
       }
     }
   ]

@@ -26,7 +26,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Offline invariant suite (53 checks, no network)
+      - name: Offline invariant suite (57 checks, no network)
         run: node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . ci-results.json
       - name: Suite must be all green
         run: node -e "const r=require('./ci-results.json'); console.log(r.passed+'/'+r.total+' passed'); if(r.failed!==0||r.passed!==r.total) process.exit(1)"

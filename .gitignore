@@ -45,3 +45,4 @@ data/
 .env.local
 !.env.example
 /screenshots/
+/reports/

@@ -708,6 +708,106 @@ try {
     assert.ok(warning, 'The unavailable warning from the submission-time gate is missing from the timeline.');
     assert.ok(l.events.indexOf(warning) < l.events.indexOf(created), 'The warning should precede the payout on the timeline.');
   });
+
+  // T54–T57: the Payments Exception Investigator's spine (29 Oct 2026). The
+  // investigator reads a case file assembled by code and answers in a fixed
+  // shape; code checks every citation before anyone sees the briefing. These
+  // checks drive the whole pipeline offline with canned answers: no model is
+  // ever called from the suite, and the real call path is proven blocked.
+  const inv = {
+    timeout: await source('src/lib/investigator/cases/timeout.ts'),
+    store: await source('src/lib/investigator/store.ts'),
+    caseFile: await source('src/lib/investigator/case-file.ts'),
+    run: await source('src/lib/investigator/run.ts'),
+    briefing: await source('src/lib/investigator/briefing.ts'),
+  };
+  const cannedCall = (obj) => async () => ({ text: '```json\n' + JSON.stringify(obj) + '\n```', inputTokens: 1000, outputTokens: 300, stopReason: 'end_turn', ms: 1 });
+  const soundBriefing = (c) => {
+    const inst = c.records.find((r) => r.kind.startsWith('instalment:') && r.text.includes('"unknown"'));
+    const lookup = c.records.find((r) => r.source === 'provider' && r.kind.startsWith('GET /payto/payments/'));
+    const unknownEvent = c.records.find((r) => r.kind === 'event:instalment.unknown');
+    return {
+      timeline: [{ text: 'The request got no answer.', ids: [unknownEvent.id] }],
+      known_for_certain: [{ text: 'The instalment is recorded as unknown.', ids: [inst.id] }],
+      explanations: [{ rank: 1, diagnosis: 'outcome_unknown', summary: 'The provider has not been heard from.', supporting_ids: [lookup.id], against_ids: [] }],
+      diagnosis: 'outcome_unknown',
+      next_step: { action: 'insufficient_evidence', detail: 'Obtain the provider record for the payment.', ids: [lookup.id], would_settle_it: lookup.kind },
+      confidence: { level: 'high', reason: 'No provider record for the payment is in the file.' },
+    };
+  };
+  await test('T54', 'Investigator case files are complete, labelled and repeatable', 'Every generated timeout case has an id on every record, a labelled instalment left in the unknown state, required-citation ids that exist, no provider record stating the lost payment\'s state in the timed-out variants, and a rendering that hashes the same twice.', async () => {
+    const cases = await inv.timeout.generateTimeoutCases({ advance });
+    assert.equal(cases.length, inv.timeout.TIMEOUT_VARIANT_COUNT);
+    let timedOut = 0;
+    for (const c of cases) {
+      const ids = c.records.map((r) => r.id);
+      assert.equal(new Set(ids).size, ids.length, `${c.id}: duplicate ids`);
+      assert.ok(ids.every((id) => /^[BPS]\d+$/.test(id)), `${c.id}: malformed id`);
+      assert.ok(c.expected.mustCite.length >= 2 && c.expected.mustCite.every((id) => ids.includes(id)), `${c.id}: required ids missing from the file`);
+      const loan = db.getLoan(c.loanId);
+      const inst = loan.instalments.find((i) => i.state === 'unknown');
+      assert.ok(inst?.paymentUid, `${c.id}: no instalment left unknown`);
+      const lookup = c.records.find((r) => r.source === 'provider' && r.kind === `GET /payto/payments/${inst.paymentUid}`);
+      assert.ok(lookup, `${c.id}: the lookup of the lost payment is not in the file`);
+      if (lookup.text.startsWith('no answer')) { timedOut += 1; assert.ok(!c.records.some((r) => r.source === 'provider' && r.text.includes(inst.paymentUid) && /state "/.test(r.text)), `${c.id}: a provider record gives the lost payment a state`); assert.ok(c.preparedEvidence?.length && c.expectedAfterEvidence, `${c.id}: no prepared evidence`); }
+      const a = inv.store.renderCase(c), b = inv.store.renderCase(c);
+      assert.equal(a.hash, b.hash);
+      assert.ok(a.wordCount < 1500, `${c.id}: ${a.wordCount} words`);
+      assert.ok(!/[0-9a-f]{32}/.test(a.text), `${c.id}: a random id leaked into the text`);
+    }
+    note({ cases: cases.length, timedOutVariants: timedOut, words: cases.map((c) => inv.store.renderCase(c).wordCount), hashes: Object.fromEntries(cases.map((c) => [c.id, inv.store.renderCase(c).hash])) });
+    assert.equal(timedOut, 4);
+  });
+  await test('T55', 'The citation check rejects what the records do not support', 'A briefing citing an id that is not in the case file, or a claim with no id, is rejected whole; a briefing whose every claim cites real records is accepted.', async () => {
+    const [c] = await inv.timeout.generateTimeoutCases({ advance });
+    const sound = soundBriefing(c);
+    const ok = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(sound) });
+    const madeUp = structuredClone(sound); madeUp.known_for_certain.push({ text: 'The provider confirmed settlement.', ids: ['P9'] });
+    const rejectedId = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(madeUp) });
+    const bare = structuredClone(sound); bare.timeline.push({ text: 'The payment failed.', ids: [] });
+    const rejectedBare = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(bare) });
+    note({ accepted: ok.check.accepted, costUsd: ok.costUsd, madeUpIds: rejectedId.check.badIds, bareUncited: rejectedBare.check.uncited, reasons: [...rejectedId.check.reasons, ...rejectedBare.check.reasons] });
+    assert.ok(ok.check.accepted, 'A sound briefing was rejected.');
+    assert.equal(ok.costUsd, (1000 * 4 + 300 * 20) / 1e6);
+    assert.ok(!rejectedId.check.accepted && rejectedId.check.badIds.includes('P9'), 'A made-up id was accepted.');
+    assert.ok(!rejectedBare.check.accepted && rejectedBare.check.uncited === 1, 'An uncited claim was accepted.');
+  });
+  await test('T56', 'A briefing that calls a timeout failed is scored wrong; one that says insufficient evidence is scored right', 'On the demo case the label is outcome_unknown / insufficient_evidence; a confident "failed, retry it" briefing scores zero on diagnosis and next step even though its citations are real, and an unknown label or a diagnosis that is not the rank-1 explanation is a shape rejection.', async () => {
+    const [c] = await inv.timeout.generateTimeoutCases({ advance });
+    const sound = soundBriefing(c);
+    const right = inv.run.scoreRun(await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(sound) }), c.expected);
+    const hasty = structuredClone(sound);
+    hasty.explanations[0].diagnosis = 'failed_at_provider'; hasty.diagnosis = 'failed_at_provider'; hasty.next_step.action = 'retry_payment'; delete hasty.next_step.would_settle_it;
+    const wrong = inv.run.scoreRun(await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(hasty) }), c.expected);
+    const unknownLabel = structuredClone(sound); unknownLabel.diagnosis = 'failed';
+    const shape1 = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(unknownLabel) });
+    const mismatch = structuredClone(sound); mismatch.diagnosis = 'settled_at_provider';
+    const shape2 = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(mismatch) });
+    const prose = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: async () => ({ text: 'The payment probably failed; retry it.', inputTokens: 1, outputTokens: 1, stopReason: 'end_turn', ms: 1 }) });
+    note({ right, wrong, shapeErrors: [shape1.check.shapeErrors, shape2.check.shapeErrors, prose.check.shapeErrors] });
+    assert.ok(right.diagnosisCorrect && right.nextStepCorrect && right.citedMustCite);
+    assert.ok(wrong.accepted && !wrong.diagnosisCorrect && !wrong.nextStepCorrect, 'A hasty "failed, retry" briefing was scored as right.');
+    assert.ok(!shape1.check.accepted && shape1.check.shapeErrors.length, 'An unknown label passed the shape check.');
+    assert.ok(!shape2.check.accepted && shape2.check.shapeErrors.some((e) => /rank-1/.test(e)), 'A diagnosis that is not the top explanation passed.');
+    assert.ok(!prose.check.accepted && prose.briefing === null, 'Prose was accepted as a briefing.');
+  });
+  await test('T57', 'New evidence extends the case file without disturbing it, and no model is ever called offline', 'Adding the prepared provider record gives it the next id for its source, leaves every earlier id and record unchanged, changes the hash the next briefing is stamped with, and the real model path is blocked by the suite\'s network guard.', async () => {
+    const [c] = await inv.timeout.generateTimeoutCases({ advance });
+    const before = inv.store.renderCase(c);
+    const ids = c.records.map((r) => r.id);
+    const lastP = Math.max(...ids.filter((i) => i[0] === 'P').map((i) => Number(i.slice(1))));
+    const added = inv.store.addEvidence(c);
+    const after = inv.store.renderCase(c);
+    const blockedBefore = blockedNetworkAttempts();
+    const real = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', apiKey: 'not-a-key' });
+    note({ added: added.id, lastProviderIdBefore: `P${lastP}`, hashBefore: before.hash, hashAfter: after.hash, realCallError: real.error, blockedFetches: blockedNetworkAttempts() - blockedBefore });
+    assert.equal(added.id, `P${lastP + 1}`);
+    assert.deepEqual(c.records.map((r) => r.id), ids);
+    assert.notEqual(before.hash, after.hash);
+    assert.ok(after.text.includes(`[${added.id}]`) && /state "settled"/.test(added.text));
+    assert.ok(real.error === 'REVIEW_NETWORK_DISABLED' && !real.briefing, 'The real model path reached the network, or produced a briefing without it.');
+    assert.equal(blockedNetworkAttempts() - blockedBefore, 1);
+  });
 } finally {
   globalThis.Date = RealDate;
   globalThis.fetch = blockedFetch;
