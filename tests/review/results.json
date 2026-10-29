@@ -1,6 +1,6 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-10-29T01:12:23.590Z",
+  "executedAt": "2026-10-29T02:38:21.286Z",
   "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 1,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 57,
-  "passed": 57,
+  "total": 59,
+  "passed": 59,
   "failed": 0,
   "results": [
     {
@@ -706,28 +706,28 @@
         "cases": 10,
         "timedOutVariants": 4,
         "words": [
-          682,
-          592,
-          610,
-          685,
-          573,
-          635,
+          679,
+          589,
+          607,
+          692,
+          581,
+          643,
           584,
           636,
-          600,
-          597
+          608,
+          605
         ],
         "hashes": {
-          "T1-01": "a85eddf77aabfaa6",
-          "T1-02": "35e96f5426956abe",
-          "T1-03": "e1e245e5a2a6c181",
-          "T1-04": "9b938af86d080b9e",
-          "T1-05": "cba3fd76570df468",
-          "T1-06": "f76ad99fd41246b5",
-          "T1-07": "bfcbec17d95ae3d9",
-          "T1-08": "73ce11e585a7c695",
-          "T1-09": "aaabb63e37bbea9c",
-          "T1-10": "5d0d855baab8a1fd"
+          "T1-01": "87aec5728d1d9c89",
+          "T1-02": "bd8c919620a950fc",
+          "T1-03": "1cdef2934199c0ae",
+          "T1-04": "39626630b6b63204",
+          "T1-05": "83981bc89e312d0a",
+          "T1-06": "35430a382eb4faba",
+          "T1-07": "aa51d623ab193882",
+          "T1-08": "d71c3f6c0b768466",
+          "T1-09": "01c6ab7300090727",
+          "T1-10": "ab88e396d3f26a90"
         }
       }
     },
@@ -800,10 +800,67 @@
       "observations": {
         "added": "P3",
         "lastProviderIdBefore": "P2",
-        "hashBefore": "52f768addde01eb3",
-        "hashAfter": "1e4171da00f51753",
+        "hashBefore": "42dbf701b7e04d8c",
+        "hashAfter": "03c88d007b18d285",
         "realCallError": "REVIEW_NETWORK_DISABLED",
         "blockedFetches": 1
+      }
+    },
+    {
+      "id": "T58",
+      "name": "Sixty labelled cases across six types, twenty held back by position",
+      "expectation": "Every generator makes ten cases through the real code; labels are from the fixed vocabulary; every required id exists; every type has an insufficient-evidence case and a tempting one; no random identifier leaks into the text; every third case is held back.",
+      "result": "PASS",
+      "observations": {
+        "cases": 60,
+        "heldBack": [
+          "T1-03",
+          "T1-06",
+          "T1-09",
+          "T2-02",
+          "T2-05",
+          "T2-08",
+          "T3-01",
+          "T3-04",
+          "T3-07",
+          "T3-10",
+          "T4-03",
+          "T4-06",
+          "T4-09",
+          "T5-02",
+          "T5-05",
+          "T5-08",
+          "T6-01",
+          "T6-04",
+          "T6-07",
+          "T6-10"
+        ],
+        "words": {
+          "timeout": 622,
+          "duplicate": 659,
+          "orphan_provider_record": 473,
+          "late_cop_failure": 422,
+          "returned_payout": 475,
+          "amount_mismatch": 616
+        }
+      }
+    },
+    {
+      "id": "T59",
+      "name": "The generators set up what their labels claim",
+      "expectation": "A duplicate raised in the portal shows two settled payments for the instalment at the provider and the app's refused collection in its log; a duplicate notification shows one; a returned payout carries the reason code on the timeline and the reversal only when it has arrived; an edited schedule is refused by the provider with an amount-mismatch code; a late no-match holds an undisbursed loan and not a disbursed one.",
+      "result": "PASS",
+      "observations": {
+        "checked": [
+          "T2-01",
+          "T2-04",
+          "T3-01",
+          "T4-01",
+          "T4-02",
+          "T5-01",
+          "T5-02",
+          "T6-04"
+        ]
       }
     }
   ]

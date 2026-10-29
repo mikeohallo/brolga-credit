@@ -1,7 +1,5 @@
 # Brolga Credit — rules for Claude Code
 
-Portfolio rules: v1 (`claude/portfolio-rules.md` in Mike's AI Projects).
-
 Brolga is a demo loan desk on the Zepto sandbox. In `sandbox` mode it moves money in a
 real test account using the token in `.env.local`, so running this repo's code is a
 privileged action and is gated the same way as a deploy.
@@ -33,16 +31,20 @@ this file never do.
 
 - `npm ci` (never `npm install`; the lockfile is the record of what runs).
 - `node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json`
-  — expect 57 passed, 0 failed; stop on any failure (one blocked network attempt is
+  — expect 59 passed, 0 failed; stop on any failure (one blocked network attempt is
   expected: T57 proves the model path is blocked offline).
 - Build: `npm run build`. Run: `npm start` (binds to 127.0.0.1; never add `-H 0.0.0.0`).
 - Walkthrough: `node scripts/walkthrough.mjs http://127.0.0.1:3000 ./shots` with
   `CHROME_PATH` set to a Chromium binary, in `mock` mode unless Mike's line says sandbox.
-- Investigator (`evaluate`): `node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs --render reports/cases`,
-  then `scripts/investigate-demo.mjs` and `scripts/investigate-eval.mjs` with the case,
-  model and trials Mike's line names. They read `BROLGA_INVESTIGATOR_KEY` from `.env.local`
-  and call the model; nothing else leaves the machine. Report the case hashes, the demo
-  file's path and the eval summary; never print `.env.local`, the key or `reports/` in full.
+- Investigator (`evaluate`): `node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs --render`
+  (60 cases, 20 held back by position; prints a hash per case), then
+  `scripts/investigate-demo.mjs` and `scripts/investigate-eval.mjs` with the case, set
+  (`--set dev|heldback|all`), model and trials Mike's line names. They read
+  `BROLGA_INVESTIGATOR_KEY` from `.env.local` (or the file `BROLGA_ENV_FILE` names) and
+  write reports to `reports/` (or `BROLGA_REPORTS_DIR`); only the model calls leave the
+  machine. The held-back set is run only when Mike's line says so. Report the case
+  hashes, the demo file's path and the eval summary; never print `.env.local`, the key
+  or a report in full.
 
 ## Never
 

@@ -6,7 +6,7 @@
 import { DIAGNOSES, NEXT_STEPS, isDiagnosis, isNextStep } from "./labels";
 import type { Briefing, Claim, Explanation } from "./types";
 
-export const PROMPT_VERSION = "briefing v1 (29 Oct 2026)";
+export const PROMPT_VERSION = "briefing v1.1 (29 Oct 2026: the rules unchanged; the label list grew with the six types)";
 
 export const SYSTEM_PROMPT = `You are the payments exception investigator at Brolga Credit, a small lender. An operator gives you a case file about one loan and one payment that something is wrong with. You write a briefing the operator will read before deciding what to do. You do not act; you have no tools; you know only what is in the case file.
 

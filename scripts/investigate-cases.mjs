@@ -44,20 +44,20 @@ const clock = { advance: (ms) => { time += ms; } };
 const source = (name) => import(pathToFileURL(path.join(root, name)));
 const db = await source('src/lib/db.ts');
 const { resetMock } = await source('src/lib/zepto/mock.ts');
-const { generateTimeoutCases, GENERATOR } = await source('src/lib/investigator/cases/timeout.ts');
+const { generateAllCases, GENERATOR } = await source('src/lib/investigator/cases/index.ts');
 const { saveStore, renderCase } = await source('src/lib/investigator/store.ts');
 
 try {
   resetMock();
   db.resetDb();
-  const cases = await generateTimeoutCases(clock);
+  const cases = await generateAllCases(clock);
   globalThis.Date = RealDate;
   const store = { version: 1, generatedAt: new RealDate().toISOString(), generator: GENERATOR, cases };
   saveStore(store, outFile);
-  console.log(`${cases.length} cases → ${path.relative(root, outFile)}`);
+  console.log(`${cases.length} cases (${cases.filter((c) => c.heldBack).length} held back) → ${path.relative(root, outFile)}`);
   for (const c of cases) {
     const r = renderCase(c);
-    console.log(`  ${c.id}  ${c.loanId}  ${r.hash}  ${String(r.wordCount).padStart(4)} words  ${c.records.length} records  expected ${c.expected.diagnosis} / ${c.expected.nextStep}  · ${c.title}`);
+    console.log(`  ${c.id}  ${c.loanId}  ${r.hash}  ${String(r.wordCount).padStart(4)} words  ${String(c.records.length).padStart(2)} records  ${c.heldBack ? 'held back' : 'dev      '}  ${c.expected.diagnosis} / ${c.expected.nextStep}  · ${c.title}`);
     if (renderDir) {
       fs.mkdirSync(renderDir, { recursive: true });
       fs.writeFileSync(path.join(renderDir, `${c.id}.txt`), r.text + '\n');
@@ -67,5 +67,6 @@ try {
   if (blockedAttempts()) throw new Error(`${blockedAttempts()} network attempt(s) were blocked; the generator must not reach the network`);
 } finally {
   globalThis.Date = RealDate;
+  process.chdir(root); // Windows will not delete the current directory
   fs.rmSync(stateDir, { recursive: true, force: true });
 }

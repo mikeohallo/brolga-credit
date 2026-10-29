@@ -5,7 +5,7 @@
 // fetched at briefing time, so the same case file always produces the same hash.
 
 import { createHash } from "node:crypto";
-import type { Borrower, Loan } from "../db";
+import { loadDb, type Borrower, type Loan } from "../db";
 import { aud, shortDate } from "../format";
 import { EXCEPTION_TYPES, type ExceptionType } from "./labels";
 
@@ -85,14 +85,27 @@ export function brolgaRecords(loan: Loan, borrower: Borrower): Omit<CaseRecord, 
       text: `Disbursement: batch ${d.paymentRef}, payout ${d.payoutRef}, debit status "${d.status}", borrower-side credit ${d.creditRef ? `${d.creditRef} status "${d.creditStatus}"` : "not yet seen"}${d.clearedAt ? `, cleared at ${seconds(d.clearedAt)}` : ""}. Funding: ${d.fundingLabel}.`,
     });
   }
+  if (loan.copHold || loan.copOverride) {
+    out.push({
+      source: "brolga",
+      at: loan.copOverride?.at ?? loan.updatedAt,
+      kind: "cop-hold",
+      text: loan.copHold
+        ? "Confirmation of Payee hold is in force on this loan: the app refuses to disburse until a named person records an override with a reason."
+        : `Confirmation of Payee hold was overridden by ${loan.copOverride!.by} at ${seconds(loan.copOverride!.at)}: "${loan.copOverride!.reason}".`,
+    });
+  }
   if (loan.mandate) {
     const m = loan.mandate;
     out.push({
       source: "brolga",
       at: m.createdAt,
       kind: "mandate",
-      text: `PayTo agreement ${m.uid}: state "${m.state}" as the app last saw it, ${aud(m.instalmentCents)} fortnightly from ${shortDate(m.firstPaymentDate)} to ${shortDate(m.lastPaymentDate)}${m.mmsAgreementId ? ", authorised by the borrower's bank" : ""}.`,
+      text: `PayTo agreement ${m.uid}: state "${m.state}" as the app last saw it, ${aud(m.instalmentCents)} fortnightly from ${shortDate(m.firstPaymentDate)} to ${shortDate(m.lastPaymentDate)}${m.mmsAgreementId ? ", authorised by the borrower's bank" : ""}.${m.pendingAmendment ? ` An amendment to ${aud(m.pendingAmendment.plan.instalmentCents)} fortnightly (${m.pendingAmendment.plan.count} instalments) was requested at ${seconds(m.pendingAmendment.requestedAt)} and the app has not yet seen the borrower's answer.` : ""}`,
     });
+  }
+  for (const a of loan.adjustments ?? []) {
+    out.push({ source: "brolga", at: a.at, kind: `adjustment:${a.type}`, text: `Adjustment (${a.type}) of ${a.cents} cents to the obligation: ${a.note}` });
   }
   for (const i of loan.instalments) {
     const bits = [`Instalment ${i.n} of ${loan.instalments.length}: due ${shortDate(i.dueDate)}, ${aud(i.amountCents)}, state "${i.state}"`];
@@ -109,6 +122,18 @@ export function brolgaRecords(loan: Loan, borrower: Borrower): Omit<CaseRecord, 
     out.push({ source: "brolga", at: e.at, kind: `event:${e.type}`, text: `${message}${e.ref ? ` [ref ${e.ref}]` : ""}` });
   }
   return out;
+}
+
+/**
+ * The app's own API log for a loan, errors only: every request the app made for
+ * this loan that came back with an error, as the console shows it. A refused
+ * request is often the clue (one payment per period, amount mismatch), and it
+ * never appears on the timeline because nothing happened.
+ */
+export function appLogErrorRecords(loanId: string): Omit<CaseRecord, "id">[] {
+  return loadDb()
+    .apilog.filter((e) => !e.ok && e.context?.startsWith(`${loanId} ·`))
+    .map((e) => ({ source: "brolga" as const, at: e.at, kind: `api-log:${e.method} ${e.path.split("?")[0]}`, text: `App request ${e.method} ${e.path.split("?")[0]} (${e.context}) was refused: HTTP ${e.status}${e.error ? `, ${e.error}` : ""}. Nothing was created.` }));
 }
 
 /** The provider's answer to one request, as a record. Pass an Error (or a message) for a failed or missing answer. */

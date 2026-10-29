@@ -808,6 +808,55 @@ try {
     assert.ok(real.error === 'REVIEW_NETWORK_DISABLED' && !real.briefing, 'The real model path reached the network, or produced a briefing without it.');
     assert.equal(blockedNetworkAttempts() - blockedBefore, 1);
   });
+
+  // T58–T59: the six exception types and the 60-case set (slice 2, 29 Oct 2026).
+  await test('T58', 'Sixty labelled cases across six types, twenty held back by position', 'Every generator makes ten cases through the real code; labels are from the fixed vocabulary; every required id exists; every type has an insufficient-evidence case and a tempting one; no random identifier leaks into the text; every third case is held back.', async () => {
+    const all = await source('src/lib/investigator/cases/index.ts');
+    const labels = await source('src/lib/investigator/labels.ts');
+    const cases = await all.generateAllCases({ advance });
+    assert.equal(cases.length, 60);
+    assert.equal(cases.filter((c) => c.heldBack).length, 20);
+    const byType = {};
+    for (const c of cases) {
+      byType[c.type] ??= [];
+      byType[c.type].push(c);
+      const ids = c.records.map((r) => r.id);
+      assert.equal(new Set(ids).size, ids.length, `${c.id}: duplicate ids`);
+      assert.ok(labels.isDiagnosis(c.expected.diagnosis) && labels.isNextStep(c.expected.nextStep), `${c.id}: label not in the vocabulary`);
+      assert.ok(c.expected.mustCite.length >= 1 && c.expected.mustCite.every((id) => ids.includes(id)), `${c.id}: required ids missing`);
+      if (c.expectedAfterEvidence) assert.ok(c.preparedEvidence?.length && labels.isDiagnosis(c.expectedAfterEvidence.diagnosis) && labels.isNextStep(c.expectedAfterEvidence.nextStep), `${c.id}: after-evidence label incomplete`);
+      const r = inv.store.renderCase(c);
+      assert.equal(r.hash, inv.store.renderCase(c).hash);
+      assert.ok(r.wordCount < 1500, `${c.id}: ${r.wordCount} words`);
+      assert.ok(!/[0-9a-f]{32}/.test(r.text), `${c.id}: a random id leaked into the text`);
+      assert.ok(!/\$1\.05|deliberate sandbox/.test(r.text), `${c.id}: a sandbox failure amount leaked into the text`);
+    }
+    assert.deepEqual(Object.keys(byType).sort(), ['amount_mismatch', 'duplicate', 'late_cop_failure', 'orphan_provider_record', 'returned_payout', 'timeout']);
+    for (const [t, list] of Object.entries(byType)) {
+      assert.equal(list.length, 10, `${t}: ${list.length} cases`);
+      assert.ok(list.some((c) => c.expected.nextStep === 'insufficient_evidence'), `${t}: no insufficient-evidence case`);
+      assert.ok(list.some((c) => c.expected.tempting), `${t}: no tempting case`);
+      assert.ok(new Set(list.map((c) => c.expected.diagnosis)).size >= 3, `${t}: fewer than three distinct diagnoses`);
+      assert.ok(list.filter((c) => c.heldBack).length >= 3, `${t}: fewer than three held back`);
+    }
+    note({ cases: cases.length, heldBack: cases.filter((c) => c.heldBack).map((c) => c.id), words: Object.fromEntries(Object.entries(byType).map(([t, l]) => [t, Math.round(l.reduce((s, c) => s + inv.store.renderCase(c).wordCount, 0) / l.length)])) });
+  });
+  await test('T59', 'The generators set up what their labels claim', 'A duplicate raised in the portal shows two settled payments for the instalment at the provider and the app\'s refused collection in its log; a duplicate notification shows one; a returned payout carries the reason code on the timeline and the reversal only when it has arrived; an edited schedule is refused by the provider with an amount-mismatch code; a late no-match holds an undisbursed loan and not a disbursed one.', async () => {
+    const all = await source('src/lib/investigator/cases/index.ts');
+    const cases = await all.generateAllCases({ advance });
+    const byId = Object.fromEntries(cases.map((c) => [c.id, c]));
+    const text = (id) => inv.store.renderCase(byId[id]).text;
+    const count = (s, re) => (s.match(re) ?? []).length;
+    assert.ok(/ZPPAY17/.test(text('T2-04')) && count(text('T2-04'), /creditor reference LN-\d+-2/g) === 2, 'T2-04 does not show the refusal and two payments for instalment 2');
+    assert.ok(count(text('T2-01'), /creditor reference LN-\d+-2/g) === 1 && count(text('T2-01'), /event:instalment\.settled · Instalment 2/g) === 2, 'T2-01 does not show one payment and two settled events');
+    assert.ok(/E105 Account Not Found/.test(text('T5-01')) && /payout reversal/.test(text('T5-01')) && /event:disbursement\.reversed/.test(text('T5-01')), 'T5-01 lacks the reason or the reversal');
+    assert.ok(/event:disbursement\.failed/.test(text('T5-02')) && !/payout reversal/.test(text('T5-02')), 'T5-02 shows a reversal it should not have');
+    assert.ok(/ZPPAY15/.test(text('T6-04')), 'T6-04 lacks the amount-mismatch refusal');
+    assert.ok(/cop-hold · Confirmation of Payee hold is in force/.test(text('T4-01')) && byId['T4-01'].records.some((r) => r.kind === 'event:loan.cop_hold'), 'T4-01 is not held');
+    assert.ok(!/cop-hold/.test(text('T4-02')) && /credit C\.\w+ status "cleared"/.test(text('T4-02')) && /result "no match"/.test(text('T4-02')), 'T4-02 should be a cleared payout with a later no-match and no hold');
+    assert.ok(/carrying loan reference LN-0021 and intent key/.test(text('T3-01')) && /Status recorded by the app: verified/.test(text('T3-01')), 'T3-01 should show the provider batch for an undisbursed loan');
+    note({ checked: ['T2-01', 'T2-04', 'T3-01', 'T4-01', 'T4-02', 'T5-01', 'T5-02', 'T6-04'] });
+  });
 } finally {
   globalThis.Date = RealDate;
   globalThis.fetch = blockedFetch;
@@ -823,6 +872,7 @@ try {
   };
   fs.writeFileSync(resultsFile, JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ total: report.total, passed: report.passed, failed: report.failed, blockedNetworkAttempts: report.network.blockedRealFetchAttempts }));
+  process.chdir(root); // Windows will not delete the current directory
   fs.rmSync(stateDir, { recursive: true, force: true });
 }
 process.exitCode = results.some(r => r.result === 'FAIL') ? 1 : 0;

@@ -20,13 +20,13 @@ jobs:
       ZEPTO_MODE: mock
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Offline invariant suite (57 checks, no network)
+      - name: Offline invariant suite (59 checks, no network)
         run: node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . ci-results.json
       - name: Suite must be all green
         run: node -e "const r=require('./ci-results.json'); console.log(r.passed+'/'+r.total+' passed'); if(r.failed!==0||r.passed!==r.total) process.exit(1)"

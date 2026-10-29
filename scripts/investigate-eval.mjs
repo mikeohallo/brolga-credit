@@ -1,11 +1,13 @@
 // Run the labelled cases against a model and write the report.
 //
-//   node --disable-warning=ExperimentalWarning scripts/investigate-eval.mjs --type timeout --model claude-opus-5-5 --trials 3 [--effort medium] [--cases T1-01,T1-04] [--concurrency 3]
+//   node --disable-warning=ExperimentalWarning scripts/investigate-eval.mjs --type all --set dev --model claude-opus-5-5 --trials 3 [--effort medium] [--cases T1-01,T1-04] [--concurrency 3]
 //
-// Every case is run from its sealed state (no evidence) `trials` times. Each run
-// is scored against the case's label. Failed and rejected runs count in the cost
-// and in the accuracy denominator: a briefing that was thrown out is a briefing
-// the operator did not get. Writes eval-<type>-<model>-<time>.json and .md to
+// --type: one exception type, or "all" (default). --set: "dev" (default; the 40
+// development cases), "heldback" (the 20 held back from prompt work; run them only
+// for a final comparison) or "all". Every case is run from its sealed state (no
+// evidence) `trials` times. Each run is scored against the case's label. Failed
+// and rejected runs count in the cost and in the accuracy denominator: a briefing
+// that was thrown out is a briefing the operator did not get. Writes eval-<type>-<model>-<time>.json and .md to
 // reports/ (or BROLGA_REPORTS_DIR); the key comes from .env.local or BROLGA_ENV_FILE.
 
 import fs from 'node:fs';
@@ -19,7 +21,9 @@ const { runBriefing, scoreRun } = await source('src/lib/investigator/run.ts');
 const { PROMPT_VERSION } = await source('src/lib/investigator/briefing.ts');
 
 process.env.ZEPTO_MODE ??= 'mock';
-const type = arg('--type', 'timeout');
+const type = arg('--type', 'all');
+const set = arg('--set', 'dev');
+if (!['dev', 'heldback', 'all'].includes(set)) { console.error('--set must be dev, heldback or all'); process.exit(2); }
 const model = arg('--model', 'claude-opus-5-5');
 const trials = Number(arg('--trials', '3'));
 const effort = arg('--effort', undefined);
@@ -31,9 +35,9 @@ if (!store) {
   console.error('No cases yet. Run: node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs');
   process.exit(2);
 }
-const cases = store.cases.filter((c) => c.type === type && c.expected && (!only.length || only.includes(c.id)));
+const cases = store.cases.filter((c) => (type === 'all' || c.type === type) && c.expected && (set === 'all' || (set === 'heldback') === !!c.heldBack) && (!only.length || only.includes(c.id)));
 if (!cases.length) {
-  console.error(`No labelled cases of type ${type}`);
+  console.error(`No labelled cases of type ${type} in the ${set} set`);
   process.exit(2);
 }
 const apiKey = readKey(KEY_VARIABLE);
@@ -48,7 +52,7 @@ const jobs = [];
 for (const c of cases) for (let t = 1; t <= trials; t++) jobs.push({ c, t });
 const results = [];
 const startedAt = new Date();
-console.log(`${cases.length} cases × ${trials} trials = ${jobs.length} runs on ${model}${effort ? ` (effort ${effort})` : ''}, ${concurrency} at a time`);
+console.log(`${cases.length} ${set} cases × ${trials} trials = ${jobs.length} runs on ${model}${effort ? ` (effort ${effort})` : ''}, ${concurrency} at a time`);
 let next = 0;
 async function worker() {
   while (next < jobs.length) {
@@ -87,8 +91,18 @@ const msList = results.map((r) => r.run.ms).filter((m) => m > 0).sort((a, b) => 
 const median = msList.length ? msList[Math.floor(msList.length / 2)] : 0;
 const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(0)}% (${a}/${b})` : 'n/a');
 
+const byType = {};
+for (const r of results) {
+  const t = store.cases.find((c) => c.id === r.caseId).type;
+  byType[t] ??= { runs: 0, diagnosisCorrect: 0, nextStepCorrect: 0, accepted: 0 };
+  byType[t].runs += 1;
+  if (r.score.diagnosisCorrect) byType[t].diagnosisCorrect += 1;
+  if (r.score.nextStepCorrect) byType[t].nextStepCorrect += 1;
+  if (r.score.accepted) byType[t].accepted += 1;
+}
+
 const summary = {
-  type, model, effort: effort ?? 'API default', prompt: PROMPT_VERSION, generator: store.generator, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
+  type, set, model, effort: effort ?? 'API default', prompt: PROMPT_VERSION, generator: store.generator, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), byType,
   cases: cases.length, trials, runs: n, errors, accepted, rejectedShape, rejectedCitations,
   diagnosisAccuracy: diagnosisCorrect / n, nextStepAccuracy: nextStepCorrect / n, requiredRecordsCited: citedMustCite / n,
   correctInsufficientEvidence: expInsufficient.length ? correctInsufficient / expInsufficient.length : null,
@@ -99,7 +113,7 @@ const summary = {
 };
 
 const md = [];
-md.push(`# Investigator evaluation: ${type}, ${model}`);
+md.push(`# Investigator evaluation: ${type === 'all' ? 'all types' : type}, ${set} set, ${model}`);
 md.push('');
 md.push(`${cases.length} cases × ${trials} trials = ${n} runs · effort ${summary.effort} · ${PROMPT_VERSION} · cases from "${store.generator}" · ${summary.finishedAt}`);
 md.push('');
@@ -118,6 +132,14 @@ md.push(`| Cost per case (all ${n} runs, failed and rejected included) | ${costK
 md.push(`| Cost, whole run | ${costKnown ? usd(cost) : 'unknown'} (${summary.inputTokens} tokens in, ${summary.outputTokens} out) |`);
 md.push(`| Time per case, median / mean | ${secs(median)} / ${secs(summary.meanMs)} |`);
 md.push('');
+if (Object.keys(byType).length > 1) {
+  md.push('## By type');
+  md.push('');
+  md.push('| Type | Runs | Diagnosis right | Next step right | Accepted |');
+  md.push('|---|---|---|---|---|');
+  for (const [t, v] of Object.entries(byType)) md.push(`| ${t} | ${v.runs} | ${pct(v.diagnosisCorrect, v.runs)} | ${pct(v.nextStepCorrect, v.runs)} | ${pct(v.accepted, v.runs)} |`);
+  md.push('');
+}
 md.push('## Per case');
 md.push('');
 md.push('| Case | Expected | Trials right | What the model chose | Title |');
@@ -134,8 +156,8 @@ const bad = results.filter((r) => !r.score.accepted);
 if (!bad.length) md.push('None.');
 for (const r of bad) md.push(`- ${r.caseId} #${r.trial}: ${r.run.error ?? r.run.check.reasons.join('; ')}`);
 
-const base = path.join(reportsDir(), `eval-${type}-${model}-${stamp()}`);
+const base = path.join(reportsDir(), `eval-${type}-${set}-${model}-${stamp()}`);
 fs.writeFileSync(base + '.json', JSON.stringify({ summary, results }, null, 2) + '\n');
 fs.writeFileSync(base + '.md', md.join('\n') + '\n');
-console.log('\n' + md.slice(0, 18).join('\n'));
+console.log('\n' + md.slice(0, md.indexOf('## Per case')).join('\n'));
 console.log(`\nWritten: ${base}.md and .json`);
