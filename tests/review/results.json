@@ -1,6 +1,6 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-11-06T04:37:57.949Z",
+  "executedAt": "2026-11-06T08:02:49.760Z",
   "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 2,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 64,
-  "passed": 64,
+  "total": 65,
+  "passed": 65,
   "failed": 0,
   "results": [
     {
@@ -964,6 +964,25 @@
           ]
         },
         "variablesCleared": true
+      }
+    },
+    {
+      "id": "T65",
+      "name": "Regenerating the cases keeps earlier briefings, evidence and marks where the records are identical, and the relabelled returned-payout cases carry the new next step",
+      "expectation": "A store with a briefing, an appended record and a mark on one case, carried into a freshly generated store, keeps all three on that case (same run id, same hash) and nothing on the others; a case whose records differ is refused rather than carried; the sealed hashes are unchanged by carrying; and T5-02 and T5-06 expect reverify_payee while T5-01 still does and the timed-out T5-07 still expects insufficient evidence.",
+      "result": "PASS",
+      "observations": {
+        "carried": {
+          "cases": 1,
+          "runs": 1,
+          "marks": 1,
+          "evidence": 1
+        },
+        "sealedHash": "cef10831c884a9a5",
+        "relabelled": [
+          "T5-02",
+          "T5-06"
+        ]
       }
     }
   ]

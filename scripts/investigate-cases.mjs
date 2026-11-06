@@ -2,9 +2,12 @@
 // (or the file BROLGA_INVESTIGATOR_STORE names; the app's Investigate tab and the
 // other scripts read the same variable, so they all agree on where the cases are).
 //
-//   node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs [--render [dir]]
+//   node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs [--render [dir]] [--carry-from <store>]
 //
 // --render alone writes each case file to reports/cases (or BROLGA_REPORTS_DIR/cases).
+// --carry-from copies the briefings, appended evidence and marks from an earlier store
+// into the new one, case by case, where the records are identical (they are, unless a
+// generator changed), so regenerating for new labels keeps what operators have done.
 //
 // Runs Brolga's real domain code against the mock provider under a fake clock,
 // in a temporary state directory, so nothing touches the app's own store. The
@@ -21,7 +24,10 @@ import { reportsDir } from './investigate-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
-const renderDir = args.includes('--render') ? path.resolve(root, args[args.indexOf('--render') + 1] ?? path.join(reportsDir(), 'cases')) : null;
+const after = (flag) => { const v = args[args.indexOf(flag) + 1]; return v && !v.startsWith('--') ? v : undefined; };
+const renderDir = args.includes('--render') ? path.resolve(root, after('--render') ?? path.join(reportsDir(), 'cases')) : null;
+const carryFrom = args.includes('--carry-from') ? path.resolve(root, after('--carry-from') ?? '') : null;
+if (args.includes('--carry-from') && !after('--carry-from')) { console.error('--carry-from needs the path of the earlier store'); process.exit(2); }
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brolga-investigator-gen-'));
 process.chdir(stateDir);
@@ -46,7 +52,7 @@ const source = (name) => import(pathToFileURL(path.join(root, name)));
 const db = await source('src/lib/db.ts');
 const { resetMock } = await source('src/lib/zepto/mock.ts');
 const { generateAllCases, GENERATOR } = await source('src/lib/investigator/cases/index.ts');
-const { saveStore, renderCase, storePath } = await source('src/lib/investigator/store.ts');
+const { saveStore, loadStore, renderCase, storePath, carryState } = await source('src/lib/investigator/store.ts');
 const outFile = storePath(root);
 
 try {
@@ -55,8 +61,8 @@ try {
   const cases = await generateAllCases(clock);
   globalThis.Date = RealDate;
   const store = { version: 1, generatedAt: new RealDate().toISOString(), generator: GENERATOR, cases };
-  saveStore(store, outFile);
   console.log(`${cases.length} cases (${cases.filter((c) => c.heldBack).length} held back) → ${path.relative(root, outFile)}`);
+  // The hashes printed and the files rendered are the sealed cases: no evidence, as the eval sees them.
   for (const c of cases) {
     const r = renderCase(c);
     console.log(`  ${c.id}  ${c.loanId}  ${r.hash}  ${String(r.wordCount).padStart(4)} words  ${String(c.records.length).padStart(2)} records  ${c.heldBack ? 'held back' : 'dev      '}  ${c.expected.diagnosis} / ${c.expected.nextStep}  · ${c.title}`);
@@ -66,6 +72,13 @@ try {
     }
   }
   if (renderDir) console.log(`case files rendered to ${renderDir}`);
+  if (carryFrom) {
+    const earlier = loadStore(carryFrom);
+    if (!earlier) throw new Error(`--carry-from: no store at ${carryFrom}`);
+    const carried = carryState(store, earlier);
+    console.log(`carried from ${path.relative(root, carryFrom)}: ${carried.runs} briefings, ${carried.evidence} evidence records and ${carried.marks} marks on ${carried.cases} cases`);
+  }
+  saveStore(store, outFile);
   if (blockedAttempts()) throw new Error(`${blockedAttempts()} network attempt(s) were blocked; the generator must not reach the network`);
 } finally {
   globalThis.Date = RealDate;

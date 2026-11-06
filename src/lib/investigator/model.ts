@@ -10,6 +10,15 @@ import path from "node:path";
 
 export const KEY_VARIABLE = "BROLGA_INVESTIGATOR_KEY";
 export const API_VERSION = "2026-10-21";
+/**
+ * The most output tokens one briefing may use, thinking included. The first
+ * three-model run (6 Nov 2026) used 4,000, and every "not a JSON object"
+ * rejection in it was an answer cut off at exactly that: 44 of Haiku's 48,
+ * all 4 of Opus's. A cap we chose is not the model's judgement, so it is set
+ * well above the longest honest answer seen (3,767 tokens on Sonnet) and the
+ * report still counts a cut-off answer as a briefing the operator did not get.
+ */
+export const DEFAULT_MAX_TOKENS = 16_000;
 const DEFAULT_BASE_URL = "https://api.anthropic.com";
 
 /** The models the Investigate tab offers, cheapest first. The eval script accepts any model id. */
@@ -77,7 +86,7 @@ export async function callModel(req: ModelRequest): Promise<ModelResponse> {
   try {
     const body: Record<string, unknown> = {
       model: req.model,
-      max_tokens: req.maxTokens ?? 4_000,
+      max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
       system: req.system,
       messages: [{ role: "user", content: req.user }],
     };

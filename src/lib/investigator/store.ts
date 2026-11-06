@@ -124,3 +124,29 @@ export function summariseMarks(store: InvestigatorStore): MarksSummary {
   out.markers = [...markers].sort();
   return out;
 }
+
+/**
+ * Carry briefings, appended evidence and marks from an earlier store into a
+ * freshly generated one, case by case, so a regeneration (new labels, say)
+ * does not lose what operators and models have already done. A case is carried
+ * only when its captured records are identical in both stores, so every
+ * carried mark still points at exactly the file its briefing read. Returns
+ * what was carried; throws if a case with state has different records.
+ */
+export function carryState(fresh: InvestigatorStore, earlier: InvestigatorStore): { cases: number; runs: number; marks: number; evidence: number } {
+  const out = { cases: 0, runs: 0, marks: 0, evidence: 0 };
+  const byId = new Map(earlier.cases.map((c) => [c.id, c]));
+  for (const c of fresh.cases) {
+    const old = byId.get(c.id);
+    if (!old || (!old.runs.length && !old.marks.length && !old.evidence.length)) continue;
+    if (JSON.stringify(old.records) !== JSON.stringify(c.records)) throw new Error(`${c.id} has briefings or marks in the earlier store but its records differ; nothing carried`);
+    c.evidence = structuredClone(old.evidence);
+    c.runs = structuredClone(old.runs);
+    c.marks = structuredClone(old.marks);
+    out.cases += 1;
+    out.runs += old.runs.length;
+    out.marks += old.marks.length;
+    out.evidence += old.evidence.length;
+  }
+  return out;
+}

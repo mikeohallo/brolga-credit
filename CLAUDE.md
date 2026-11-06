@@ -31,7 +31,7 @@ this file never do.
 
 - `npm ci` (never `npm install`; the lockfile is the record of what runs).
 - `node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json`
-  — expect 64 passed, 0 failed; stop on any failure (two blocked network attempts are
+  — expect 65 passed, 0 failed; stop on any failure (two blocked network attempts are
   expected: T57 and T61 prove the model path is blocked offline). The suite ignores the
   investigator variables below, so a line may set them for every command.
 - Build: `npm run build`. Run: `npm start` (binds to 127.0.0.1; never add `-H 0.0.0.0`).
@@ -51,7 +51,9 @@ this file never do.
   when the server has the key and the store has the cases, skipped with a note otherwise.
   It never marks a briefing.
 - Investigator (`evaluate`): `node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs --render`
-  (60 cases, 20 held back by position; prints a hash per case), then
+  (60 cases, 20 held back by position; prints a hash per case; `--carry-from <store>` copies
+  the briefings, evidence and marks of an earlier store into the new one where the records
+  are identical, so a regeneration for new labels keeps what operators have done), then
   `scripts/investigate-demo.mjs` and `scripts/investigate-eval.mjs` with the case, set
   (`--set dev|heldback|all`), model and trials Mike's line names. They read
   `BROLGA_INVESTIGATOR_KEY` from `.env.local` (or the file `BROLGA_ENV_FILE` names) and

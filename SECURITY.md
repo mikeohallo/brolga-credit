@@ -12,14 +12,15 @@ Open a GitHub issue. There is no bug bounty and no SLA; this is a portfolio repo
 
 ## Known advisories
 
-Checked with `npm audit` on **29 October 2026**: no open advisories.
+Checked with `npm audit` on **6 November 2026**: no open advisories (one found and fixed that day, below).
 
 | Package | Severity | Where it sat | Reachable from the running app? | Status |
 |---|---|---|---|---|
+| `minimatch` ≥ 7.0.0 < 11.0.1 (10.2.6, via `@typescript-eslint/typescript-estree` → `typescript-eslint` → `eslint-config-next`) | moderate (denial of service through glob-part amplification, GHSA-g3hv-75wg-m249) | `devDependencies` only — the ESLint tool chain | No. Not in the production bundle; nothing at run time matches globs. | **Fixed 6 November 2026:** a scoped `overrides` entry in `package.json` pins that one instance to `minimatch` 11.0.5; the `minimatch` 3.x copies elsewhere in the lint chain are outside the affected range and untouched. |
 | `zod` < 4.6.6 (via `zod-validation-error` → `eslint-plugin-react-hooks` → `eslint-config-next`) | high (memory exhaustion while validating oversized constrained collections) | `devDependencies` only — the ESLint tool chain | No. Not in the production bundle; nothing at run time validates input with `zod`. | **Fixed 29 October 2026:** the lockfile moves `zod` to 4.6.7 (`npm audit fix`, one package, no other change). |
 | `braces` 3.0.3 (via `micromatch` → `fast-glob` → `@next/eslint-plugin-next` → `eslint-config-next`) | high (stack-exhaustion denial of service on deeply nested glob patterns) | `devDependencies` only — the ESLint tool chain | No. | **Gone by 29 October 2026:** no longer reported by `npm audit` on the current lockfile (the lint config line moved on). Kept here as the record of the 18 October review. |
 
-Next scheduled look **18 November 2026**, and on every dependency change.
+Next scheduled look **20 November 2026**, and on every dependency change.
 
 ## The investigator's model key
 

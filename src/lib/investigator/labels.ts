@@ -5,7 +5,11 @@
 //
 // Rule for the test set: every case has exactly one right next step by
 // definition. Where two labels could both fit one situation, the definitions
-// below are drawn so that only one does (see "wait_for_provider").
+// below are drawn so that only one does: "wait_for_provider" was narrowed on
+// 29 Oct 2026 (a lost payment the provider holds is adopted, not waited on) and
+// again on 6 Nov 2026 (a return whose reason names a bad account is re-verified
+// even while the reversal is still in flight; Opus chose that three times of
+// three on the development case). The decisions log in the project has the why.
 
 export type ExceptionType =
   | "timeout" // a request got no answer; the outcome is unknown until the provider says
@@ -100,11 +104,11 @@ export const NEXT_STEPS: Record<NextStep, string> = {
   adopt_provider_record: "The provider's record is the truth and the app is behind it: record the provider's state, amount or existence against the app's instalment, loan or schedule. Send nothing.",
   resend_same_intent: "Send the request again with the same payment identifier; the provider has no record of it, so this cannot pay twice.",
   retry_payment: "Retry the failed payment through the provider's retry, with the same identifier.",
-  wait_for_provider: "The app already matches the provider and the payment is still in progress at the provider; there is nothing to record. Refresh later.",
+  wait_for_provider: "Money is in flight at the provider, the app already matches the provider's record, and nothing else in the records is known to be wrong; there is nothing to record and nothing to fix. Refresh later.",
   no_action: "The records agree and nothing is owed either way; the question was a false alarm. Answer the person who raised it; change nothing.",
   refund_duplicate: "One instalment was collected twice; the second collection must be returned to the borrower.",
   hold_disbursement: "Keep the loan on hold: no money moves until a named person records an override with a reason, or the borrower supplies an account that passes the check.",
-  reverify_payee: "Run the name check again (and obtain corrected account details if it fails) before any payment is sent to this payee.",
+  reverify_payee: "A return reason from the payee's bank says the account on file is bad (not found, closed, payment stopped), whichever way the money is moving now: run the name check again (and obtain corrected account details if it fails) before any payment is sent to this payee.",
   escalate: "A person with more context must decide: a payment may have gone somewhere it should not have, or the records conflict in a way the desk cannot resolve.",
 };
 

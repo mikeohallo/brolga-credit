@@ -7,8 +7,8 @@
 // logged paths), and T51–T53 after the third assessment of 17 October (lost payout
 // answer reconciled ahead of the CoP gate; the verdict recorded at submission), T54–T59
 // for the Payments Exception Investigator's spine and its six case generators, and
-// T60–T63 for the Investigate tab's server routes (29 Oct 2026), and T64 for the
-// report's operator-marks line (6 Nov 2026). Runs
+// T60–T63 for the Investigate tab's server routes (29 Oct 2026), T64 for the report's
+// operator-marks line and T65 for carrying state across a regeneration (6 Nov 2026). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -1056,6 +1056,38 @@ try {
     assert.equal(none.marks, 0);
     for (const v of ['BROLGA_ENV_FILE', 'BROLGA_INVESTIGATOR_STORE', 'BROLGA_REPORTS_DIR', 'BROLGA_INVESTIGATOR_KEY']) assert.equal(process.env[v], undefined, `${v} reached the suite`);
     note({ summary: m, variablesCleared: true });
+  });
+  await test('T65', 'Regenerating the cases keeps earlier briefings, evidence and marks where the records are identical, and the relabelled returned-payout cases carry the new next step', 'A store with a briefing, an appended record and a mark on one case, carried into a freshly generated store, keeps all three on that case (same run id, same hash) and nothing on the others; a case whose records differ is refused rather than carried; the sealed hashes are unchanged by carrying; and T5-02 and T5-06 expect reverify_payee while T5-01 still does and the timed-out T5-07 still expects insufficient evidence.', async () => {
+    const earlierCases = await inv.timeout.generateTimeoutCases({ advance });
+    const c = earlierCases[0];
+    const run = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(soundBriefing(c)) });
+    inv.store.addEvidence(c);
+    inv.store.addMark(c, { runId: run.id, verdict: 'right', by: 'reviewer' });
+    const earlier = { version: 1, generatedAt: new Date().toISOString(), generator: 'suite', cases: earlierCases };
+    const sealedHash = inv.caseFile.renderCaseFile({ caseId: c.id, type: c.type, loanId: c.loanId, question: c.question, records: c.records }).hash;
+    // A regeneration makes byte-identical records (the hashes match across machines); here the
+    // fresh store is the sealed shape of the same cases, which is what a regeneration produces.
+    const fresh = { version: 1, generatedAt: new Date().toISOString(), generator: 'suite', cases: earlierCases.map((x) => ({ ...structuredClone(x), evidence: [], runs: [], marks: [] })) };
+    assert.deepEqual(fresh.cases[0].records, c.records);
+    const carried = inv.store.carryState(fresh, earlier);
+    assert.deepEqual(carried, { cases: 1, runs: 1, marks: 1, evidence: 1 });
+    const f0 = fresh.cases[0];
+    assert.equal(f0.runs[0].id, run.id);
+    assert.equal(f0.marks[0].caseHash, run.caseHash);
+    assert.equal(f0.evidence.length, 1);
+    assert.ok(fresh.cases.slice(1).every((x) => !x.runs.length && !x.marks.length && !x.evidence.length));
+    const sealedAfter = inv.caseFile.renderCaseFile({ caseId: f0.id, type: f0.type, loanId: f0.loanId, question: f0.question, records: f0.records }).hash;
+    assert.equal(sealedAfter, sealedHash);
+    const tampered = structuredClone(earlier); tampered.cases[0].records[0].text += ' (changed)';
+    assert.throws(() => inv.store.carryState(structuredClone(fresh), tampered), /records differ/);
+    const rp = await (await source('src/lib/investigator/cases/returned-payout.ts')).generateReturnedPayoutCases({ advance });
+    const by = Object.fromEntries(rp.map((x) => [x.id, x]));
+    assert.equal(by['T5-02'].expected.nextStep, 'reverify_payee');
+    assert.equal(by['T5-06'].expected.nextStep, 'reverify_payee');
+    assert.equal(by['T5-01'].expected.nextStep, 'reverify_payee');
+    assert.equal(by['T5-07'].expected.nextStep, 'insufficient_evidence');
+    assert.ok(!rp.some((x) => x.expected.nextStep === 'wait_for_provider'), 'a returned-payout case still expects wait_for_provider');
+    note({ carried, sealedHash, relabelled: ['T5-02', 'T5-06'] });
   });
 } finally {
   globalThis.Date = RealDate;
