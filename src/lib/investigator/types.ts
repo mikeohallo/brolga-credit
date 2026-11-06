@@ -44,8 +44,11 @@ export type BriefingRun = {
   evidenceCount: number; // how many appended evidence records were in that file
   inputTokens: number;
   outputTokens: number;
-  ms: number;
-  costUsd: number | null; // null when the price table has no entry for the model
+  ms: number; // wall time of the call, a failed one included
+  costUsd: number | null; // null when the price table has no entry for the model, or the call failed before an answer was billed
+  maxTokens?: number; // the output cap the call was given (thinking included); an answer at the cap was cut off
+  effort?: string | null; // the effort setting asked for; null means the model's own default
+  stopReason?: string | null; // what the API said ended the answer ("end_turn", "max_tokens"...); null when the call failed
   raw: string; // the model's text, kept for the record (synthetic data only)
   briefing: Briefing | null; // null when the JSON could not be parsed
   check: CheckResult;

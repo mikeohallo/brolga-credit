@@ -1,6 +1,6 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-11-06T08:02:49.760Z",
+  "executedAt": "2026-11-06T10:41:13.086Z",
   "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 2,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 65,
-  "passed": 65,
+  "total": 68,
+  "passed": 68,
   "failed": 0,
   "results": [
     {
@@ -982,6 +982,51 @@
         "relabelled": [
           "T5-02",
           "T5-06"
+        ]
+      }
+    },
+    {
+      "id": "T66",
+      "name": "The sixty sealed cases hash exactly as the repo publishes them",
+      "expectation": "Generated here under the cases script's own clock, every case's sealed rendering (its captured records and question, no evidence) hashes to the value in tests/review/investigator-hashes.json: sixty entries, sixty matches, the same ids; so a store whose hashes differ is a different set, and the eval refuses one unless told the difference is meant.",
+      "result": "PASS",
+      "observations": {
+        "cases": 60,
+        "matched": 60,
+        "first": "T1-01 ac7de2259775e55c",
+        "last": "T6-10 c514fbfe2af12282"
+      }
+    },
+    {
+      "id": "T67",
+      "name": "A mark or a record saved while a briefing is being written survives, and the run records what the call was given",
+      "expectation": "With the model answered by an in-memory stand-in for the Messages API that takes its time, the brief route reads the case, waits for the answer and only then records the run; a record appended to another case and a mark given on it in the meantime are both still in the file afterwards, the run is recorded on its own case with the hash of the file it read, and it carries the output cap, the effort setting (the default) and the API's stop reason; the stand-in was called exactly once, with the key in its header and nowhere in any response.",
+      "result": "PASS",
+      "observations": {
+        "evidenceKept": 1,
+        "markKept": 1,
+        "run": {
+          "maxTokens": 16000,
+          "effort": null,
+          "stopReason": "end_turn",
+          "caseHash": "ba176e0363219a6a"
+        },
+        "standInCalls": 1
+      }
+    },
+    {
+      "id": "T68",
+      "name": "The tab writes nothing on a held-back case, the label leaves the server only after a mark, a label is an own property, and a carry refuses a case whose file it cannot reproduce",
+      "expectation": "The evidence route answers 403 on a held-back case and changes nothing; a case is returned with no expected label until it has a mark, and with it afterwards; \"constructor\" and \"__proto__\" are not labels; carrying state refuses a case whose question was reworded or whose prepared evidence changed, even with identical records, and carries one that is the same.",
+      "result": "PASS",
+      "observations": {
+        "heldBackEvidenceStatus": 403,
+        "labelBeforeMark": null,
+        "labelAfterMark": "outcome_unknown",
+        "prototypeNamesRejected": true,
+        "carryRefusals": [
+          "reworded question",
+          "changed prepared evidence"
         ]
       }
     }

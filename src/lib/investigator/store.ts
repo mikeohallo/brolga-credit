@@ -37,9 +37,20 @@ export function loadStore(file = storePath()): InvestigatorStore | null {
 
 export function saveStore(store: InvestigatorStore, file = storePath()): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = file + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
-  fs.renameSync(tmp, file);
+  // A temporary name of this process's own, so two writers (the cases script and
+  // the server, say) never share one and the rename is the only visible step.
+  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
+    fs.renameSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+/** The hash of the case as sealed: its captured records and question, no evidence. The eval runs every trial from this state. */
+export function sealedHash(c: InvestigatorCase): string {
+  return renderCaseFile({ caseId: c.id, type: c.type, loanId: c.loanId, question: c.question, records: c.records }).hash;
 }
 
 /** The records the model sees for a case right now: the captured ones plus every evidence record added so far. */
@@ -129,9 +140,11 @@ export function summariseMarks(store: InvestigatorStore): MarksSummary {
  * Carry briefings, appended evidence and marks from an earlier store into a
  * freshly generated one, case by case, so a regeneration (new labels, say)
  * does not lose what operators and models have already done. A case is carried
- * only when its captured records are identical in both stores, so every
- * carried mark still points at exactly the file its briefing read. Returns
- * what was carried; throws if a case with state has different records.
+ * only when the file a briefing read can still be reproduced from the fresh
+ * case: the sealed hash (records and question) is the same, and so is the
+ * prepared evidence the appended records came from. Then every carried mark
+ * still points at exactly the file its briefing read. Returns what was
+ * carried; throws if a case with state differs in either.
  */
 export function carryState(fresh: InvestigatorStore, earlier: InvestigatorStore): { cases: number; runs: number; marks: number; evidence: number } {
   const out = { cases: 0, runs: 0, marks: 0, evidence: 0 };
@@ -139,7 +152,8 @@ export function carryState(fresh: InvestigatorStore, earlier: InvestigatorStore)
   for (const c of fresh.cases) {
     const old = byId.get(c.id);
     if (!old || (!old.runs.length && !old.marks.length && !old.evidence.length)) continue;
-    if (JSON.stringify(old.records) !== JSON.stringify(c.records)) throw new Error(`${c.id} has briefings or marks in the earlier store but its records differ; nothing carried`);
+    if (JSON.stringify(old.records) !== JSON.stringify(c.records) || sealedHash(old) !== sealedHash(c)) throw new Error(`${c.id} has briefings or marks in the earlier store but its records differ; nothing carried`);
+    if (JSON.stringify(old.preparedEvidence ?? null) !== JSON.stringify(c.preparedEvidence ?? null)) throw new Error(`${c.id} has briefings or marks in the earlier store but its prepared evidence differs; nothing carried`);
     c.evidence = structuredClone(old.evidence);
     c.runs = structuredClone(old.runs);
     c.marks = structuredClone(old.marks);

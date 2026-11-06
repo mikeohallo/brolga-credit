@@ -1,7 +1,7 @@
 import { ok, fail, readJson } from "@/lib/api";
 import { caseView, InvestigatorApiError, withCase } from "@/lib/investigator/api";
 import { MODELS, NO_KEY_MESSAGE, readKey } from "@/lib/investigator/model";
-import { runBriefing } from "@/lib/investigator/run";
+import { produceBriefing } from "@/lib/investigator/run";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +11,12 @@ export const dynamic = "force-dynamic";
 // a rejected briefing is kept as a rejection. Nothing here changes a loan, and
 // held-back cases are refused: they are run only by the eval script, on Mike's
 // line, for the final comparison (decisions D16).
+//
+// The model call happens between two short visits to the store, not inside one:
+// first the case is read as it stands (a copy), then the model takes its tens of
+// seconds, then the run is appended to the case as it is by then and saved. A
+// mark or a record added meanwhile survives (the fourth review, 6 Nov 2026, F1).
+// The run carries the hash of the file it actually read.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -19,11 +25,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!MODELS.some((m) => m.id === model)) return fail(new Error(`Unknown model ${model}; the tab offers ${MODELS.map((m) => m.id).join(", ")}`), 400);
     const apiKey = readKey();
     if (!apiKey) return fail(new Error(NO_KEY_MESSAGE), 400);
+    const snapshot = await withCase(id, (c) => {
+      if (c.heldBack) throw new InvestigatorApiError(403, `${c.id} is held back from development; it is run only in the final comparison, by the eval script.`);
+      return structuredClone(c);
+    });
+    const run = await produceBriefing(snapshot, { model, apiKey });
     const view = await withCase(
       id,
-      async (c) => {
-        if (c.heldBack) throw new InvestigatorApiError(403, `${c.id} is held back from development; it is run only in the final comparison, by the eval script.`);
-        await runBriefing(c, { model, apiKey });
+      (c) => {
+        c.runs.push(run);
         return caseView(c);
       },
       { save: true },

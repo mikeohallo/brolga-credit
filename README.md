@@ -16,7 +16,7 @@ A demo, not a product.
 
 **What's measured:** built and verified end to end against the Zepto sandbox on
 12 September 2026 (Direct Entry disbursement, PayTo agreement, real-time collection with
-failure and retry, suspension, reactivation, bilateral amendment, cancellation). 65 offline
+failure and retry, suspension, reactivation, bilateral amendment, cancellation). 68 offline
 checks run the real domain code against a mock provider with a controllable clock, on
 every push (badge above). Three independent reviews shaped them. The first review's harness
 passed 14 of its 36 checks on its first run and became the regression suite. The second and
@@ -218,9 +218,11 @@ unavailable before submission). They fail on the code as it was and pass on the
 fix. The same workflow now runs on every push to this repository — see the badge
 above and `.github/workflows/ci.yml`; it holds no secrets and makes no Zepto calls.
 
-T54 to T65 cover the Payments Exception Investigator: the case file and its ids, the
-citation check, the scoring, the six case generators and the sixty-case set, and the
-Investigate tab's routes. They drive the whole pipeline with canned answers and prove
+T54 to T68 cover the Payments Exception Investigator: the case file and its ids, the
+citation check, the scoring, the six case generators and the sixty-case set (T66 pins
+their sixty hashes to `tests/review/investigator-hashes.json`), and the Investigate tab's
+routes, including that a mark saved while a briefing is being written survives (T67, a
+fourth review's finding). They drive the whole pipeline with canned answers and prove
 the real model path is blocked offline; the suite never calls a model.
 
 `CHROME_PATH=<chromium> node scripts/walkthrough.mjs http://localhost:3000 ./shots`

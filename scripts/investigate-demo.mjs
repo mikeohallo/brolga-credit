@@ -10,20 +10,19 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { arg, briefingMarkdown, readKey, reportsDir, root, secs, sourceLoader, stamp, usd } from './investigate-lib.mjs';
+import { arg, briefingMarkdown, readKey, reportsDir, secs, sourceLoader, stamp, storeFile, usd } from './investigate-lib.mjs';
 
 const source = sourceLoader();
 const { KEY_VARIABLE } = await source('src/lib/investigator/model.ts');
-const { loadStore, saveStore, storePath, addEvidence, renderCase } = await source('src/lib/investigator/store.ts');
+const { loadStore, saveStore, addEvidence, renderCase } = await source('src/lib/investigator/store.ts');
 const { runBriefing, scoreRun } = await source('src/lib/investigator/run.ts');
 const { PROMPT_VERSION } = await source('src/lib/investigator/briefing.ts');
 
-process.env.ZEPTO_MODE ??= 'mock';
 const caseId = arg('--case', 'T1-01');
 const model = arg('--model', 'claude-opus-5-5');
 const effort = arg('--effort', undefined);
 
-const file = storePath(root);
+const file = storeFile();
 const store = loadStore(file);
 if (!store) {
   console.error(`No cases yet. Run: node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs`);

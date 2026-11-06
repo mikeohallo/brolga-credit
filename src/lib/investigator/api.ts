@@ -42,8 +42,8 @@ export type CaseView = {
   records: (CaseRecord & { evidence?: { addedAt: string; label: string } })[]; // captured first, then appended evidence, in id order per source
   evidenceLeft: number;
   rendered: { text: string; hash: string; wordCount: number }; // the exact file the next briefing would read
-  expected: Expected | null; // the label on the case as made (shown by the tab only after a mark)
-  expectedNow: Expected | null; // the label that applies with the evidence added so far
+  expected: Expected | null; // the label on the case as made; null until the case has a mark, so the operator's verdict is their own
+  expectedNow: Expected | null; // the label that applies with the evidence added so far; null until a mark, likewise
   runs: BriefingRun[]; // oldest first; each carries the hash of the file it saw
   marks: Mark[];
 };
@@ -97,8 +97,10 @@ export function caseView(c: InvestigatorCase): CaseView {
     records: caseRecords(c).map((r) => (evidenceById.has(r.id) ? { ...r, evidence: evidenceById.get(r.id) } : r)),
     evidenceLeft: Math.max(0, (c.preparedEvidence?.length ?? 0) - c.evidence.length),
     rendered,
-    expected: c.expected ?? null,
-    expectedNow: expectedNow(c) ?? null,
+    // The label leaves the server only once the case has a mark (the fourth review, 6 Nov
+    // 2026, F8): before that the browser never holds it, so a verdict cannot be steered by it.
+    expected: c.marks.length ? (c.expected ?? null) : null,
+    expectedNow: c.marks.length ? (expectedNow(c) ?? null) : null,
     runs: c.runs,
     marks: c.marks,
   };
@@ -123,14 +125,27 @@ export class InvestigatorApiError extends Error {
   }
 }
 
-/** Load the store, find the case, let the caller change it, save. One operator, one process; the save is whole-file and atomic. */
-export async function withCase<T>(id: string, fn: (c: InvestigatorCase, store: InvestigatorStore) => Promise<T> | T, opts: { save?: boolean } = {}): Promise<T> {
-  const file = storePath();
-  const store = loadStore(file);
-  if (!store) throw new InvestigatorApiError(404, NO_CASES_MESSAGE);
-  const c = store.cases.find((x) => x.id === id);
-  if (!c) throw new InvestigatorApiError(404, `No case ${id}`);
-  const out = await fn(c, store);
-  if (opts.save) saveStore(store, file);
-  return out;
+/**
+ * Load the store, find the case, let the caller change it, save. One operator, one
+ * process; the save is whole-file and atomic, and every load–change–save runs to
+ * the end before the next one starts (a process-wide queue), so two requests can
+ * never overwrite each other's change. Nothing slow belongs inside `fn`: the
+ * brief route calls the model outside this window and records the run in a
+ * second, short call (the fourth review, 6 Nov 2026, F1: the model call used to
+ * sit inside, and a mark saved meanwhile was lost under a stale save).
+ */
+let queue: Promise<unknown> = Promise.resolve();
+export function withCase<T>(id: string, fn: (c: InvestigatorCase, store: InvestigatorStore) => Promise<T> | T, opts: { save?: boolean } = {}): Promise<T> {
+  const job = queue.then(async () => {
+    const file = storePath();
+    const store = loadStore(file);
+    if (!store) throw new InvestigatorApiError(404, NO_CASES_MESSAGE);
+    const c = store.cases.find((x) => x.id === id);
+    if (!c) throw new InvestigatorApiError(404, `No case ${id}`);
+    const out = await fn(c, store);
+    if (opts.save) saveStore(store, file);
+    return out;
+  });
+  queue = job.catch(() => undefined);
+  return job;
 }

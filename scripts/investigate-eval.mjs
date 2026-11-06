@@ -1,26 +1,28 @@
 // Run the labelled cases against a model and write the report.
 //
-//   node --disable-warning=ExperimentalWarning scripts/investigate-eval.mjs --type all --set dev --model claude-opus-5-5 --trials 3 [--effort medium] [--cases T1-01,T1-04] [--concurrency 3]
+//   node --disable-warning=ExperimentalWarning scripts/investigate-eval.mjs --type all --set dev --model claude-opus-5-5 --trials 3 [--effort medium] [--cases T1-01,T1-04] [--concurrency 3] [--allow-moved-hashes]
 //
 // --type: one exception type, or "all" (default). --set: "dev" (default; the 40
 // development cases), "heldback" (the 20 held back from prompt work; run them only
 // for a final comparison) or "all". Every case is run from its sealed state (no
 // evidence) `trials` times. Each run is scored against the case's label. Failed
 // and rejected runs count in the cost and in the accuracy denominator: a briefing
-// that was thrown out is a briefing the operator did not get. Writes eval-<type>-<model>-<time>.json and .md to
-// reports/ (or BROLGA_REPORTS_DIR); the key comes from .env.local or BROLGA_ENV_FILE.
+// that was thrown out is a briefing the operator did not get. The store's sealed hashes
+// must match tests/review/investigator-hashes.json (the published set); a store that
+// differs is refused unless --allow-moved-hashes says the difference is meant, and the
+// report then says so. Writes eval-<type>-<model>-<time>.json and .md to reports/ (or
+// BROLGA_REPORTS_DIR); the key comes from .env.local or BROLGA_ENV_FILE.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { arg, readKey, reportsDir, root, secs, sourceLoader, stamp, usd } from './investigate-lib.mjs';
+import { arg, movedHashes, readKey, readManifest, reportsDir, secs, sourceLoader, stamp, storeFile, usd } from './investigate-lib.mjs';
 
 const source = sourceLoader();
 const { KEY_VARIABLE, PRICES_USD_PER_MTOK } = await source('src/lib/investigator/model.ts');
-const { loadStore, storePath, summariseMarks } = await source('src/lib/investigator/store.ts');
+const { loadStore, sealedHash, summariseMarks } = await source('src/lib/investigator/store.ts');
 const { runBriefing, scoreRun } = await source('src/lib/investigator/run.ts');
 const { PROMPT_VERSION } = await source('src/lib/investigator/briefing.ts');
 
-process.env.ZEPTO_MODE ??= 'mock';
 const type = arg('--type', 'all');
 const set = arg('--set', 'dev');
 if (!['dev', 'heldback', 'all'].includes(set)) { console.error('--set must be dev, heldback or all'); process.exit(2); }
@@ -29,12 +31,22 @@ const trials = Number(arg('--trials', '3'));
 const effort = arg('--effort', undefined);
 const only = arg('--cases', '').split(',').map((s) => s.trim()).filter(Boolean);
 const concurrency = Math.max(1, Number(arg('--concurrency', '3')));
+const allowMoved = process.argv.includes('--allow-moved-hashes');
 
-const store = loadStore(storePath(root));
+const store = loadStore(storeFile());
 if (!store) {
   console.error('No cases yet. Run: node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs');
   process.exit(2);
 }
+// The sealed set is the one the repo publishes, or the report says it is not.
+const manifest = readManifest();
+const moved = movedHashes(store, sealedHash, manifest);
+if (!manifest) console.warn('WARNING: no hash manifest in the repo; this store is not checked against the published set.');
+if (moved.length && !allowMoved) {
+  console.error(`${moved.length} of ${store.cases.length} cases hash differently from the published set (${moved.map((m) => m.id).join(', ')}); the published numbers do not describe this store. Regenerate it from this commit, or pass --allow-moved-hashes if the difference is meant.`);
+  process.exit(2);
+}
+if (moved.length) console.warn(`${moved.length} case${moved.length === 1 ? '' : 's'} hash differently from the published set (${moved.map((m) => m.id).join(', ')}); running anyway on --allow-moved-hashes, and the report says so.`);
 const cases = store.cases.filter((c) => (type === 'all' || c.type === type) && c.expected && (set === 'all' || (set === 'heldback') === !!c.heldBack) && (!only.length || only.includes(c.id)));
 if (!cases.length) {
   console.error(`No labelled cases of type ${type} in the ${set} set`);
@@ -85,8 +97,11 @@ const notExpInsufficient = results.filter((r) => !r.score.expectedInsufficient);
 const overCautious = notExpInsufficient.filter((r) => r.score.saidInsufficient).length;
 const claims = sum((r) => r.score.claims);
 const unsupported = sum((r) => r.score.unsupportedClaims);
+// Cost is summed over the calls that answered and divided over every run, failed and
+// rejected included (a failed call is not billed as a briefing; its time still counts).
+const answered = results.filter((r) => !r.run.error);
 const cost = sum((r) => r.run.costUsd ?? 0);
-const costKnown = results.every((r) => r.run.costUsd !== null);
+const costKnown = answered.every((r) => r.run.costUsd !== null);
 const msList = results.map((r) => r.run.ms).filter((m) => m > 0).sort((a, b) => a - b);
 const median = msList.length ? msList[Math.floor(msList.length / 2)] : 0;
 const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(0)}% (${a}/${b})` : 'n/a');
@@ -104,12 +119,13 @@ for (const r of results) {
 
 const summary = {
   type, set, model, effort: effort ?? 'API default', prompt: PROMPT_VERSION, generator: store.generator, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), byType, operatorMarks: marks,
+  sealedSet: manifest ? (moved.length ? { matchesManifest: false, moved: moved.map((m) => m.id) } : { matchesManifest: true, moved: [] }) : { matchesManifest: null, moved: [] },
   cases: cases.length, trials, runs: n, errors, accepted, rejectedShape, rejectedCitations,
   diagnosisAccuracy: diagnosisCorrect / n, nextStepAccuracy: nextStepCorrect / n, requiredRecordsCited: citedMustCite / n,
   correctInsufficientEvidence: expInsufficient.length ? correctInsufficient / expInsufficient.length : null,
   overCaution: notExpInsufficient.length ? overCautious / notExpInsufficient.length : null,
   unsupportedClaimRate: claims ? unsupported / claims : null, claims, unsupported,
-  costUsdTotal: costKnown ? cost : null, costUsdPerCaseTrial: costKnown ? cost / n : null, medianMs: median, meanMs: msList.length ? msList.reduce((a, b) => a + b, 0) / msList.length : 0,
+  costUsdTotal: costKnown ? cost : null, costUsdPerRun: costKnown ? cost / n : null, costUsdPerCaseTrial: costKnown ? cost / n : null, costUsdPerCase: costKnown ? cost / cases.length : null, medianMs: median, meanMs: msList.length ? msList.reduce((a, b) => a + b, 0) / msList.length : 0,
   inputTokens: sum((r) => r.run.inputTokens), outputTokens: sum((r) => r.run.outputTokens),
 };
 
@@ -117,6 +133,8 @@ const md = [];
 md.push(`# Investigator evaluation: ${type === 'all' ? 'all types' : type}, ${set} set, ${model}`);
 md.push('');
 md.push(`${cases.length} cases × ${trials} trials = ${n} runs · effort ${summary.effort} · ${PROMPT_VERSION} · cases from "${store.generator}" · ${summary.finishedAt}`);
+md.push('');
+md.push(summary.sealedSet.matchesManifest === true ? `Sealed set: every case hashes as tests/review/investigator-hashes.json publishes.` : summary.sealedSet.matchesManifest === false ? `**Sealed set: ${moved.length} case${moved.length === 1 ? '' : 's'} (${moved.map((m) => m.id).join(', ')}) hash differently from the published set; these numbers describe this store, not the published one.**` : 'Sealed set: not checked (no hash manifest in this checkout).');
 md.push('');
 md.push('| Measure | Result |');
 md.push('|---|---|');
@@ -129,9 +147,10 @@ md.push(`| Unsupported claims (no record, or a record that isn't there) | ${pct(
 md.push(`| Briefings rejected by the citation check | ${pct(rejectedCitations, n)} |`);
 md.push(`| Briefings rejected for shape (not the JSON asked for) | ${pct(rejectedShape, n)} |`);
 md.push(`| Model calls that failed | ${pct(errors, n)} |`);
-md.push(`| Cost per case (all ${n} runs, failed and rejected included) | ${costKnown ? usd(cost / n) : 'unknown: no price on file'} |`);
+md.push(`| Cost a briefing (one run; averaged over all ${n} runs, rejected ones included${errors ? `; ${errors} failed call${errors === 1 ? '' : 's'} not billed` : ''}) | ${costKnown ? usd(cost / n) : 'unknown: no price on file'} |`);
+md.push(`| Cost a case (${trials} trial${trials === 1 ? '' : 's'} each) | ${costKnown ? usd(cost / cases.length) : 'unknown'} |`);
 md.push(`| Cost, whole run | ${costKnown ? usd(cost) : 'unknown'} (${summary.inputTokens} tokens in, ${summary.outputTokens} out) |`);
-md.push(`| Time per case, median / mean | ${secs(median)} / ${secs(summary.meanMs)} |`);
+md.push(`| Time a briefing, median / mean (failed calls at their wall time) | ${secs(median)} / ${secs(summary.meanMs)} |`);
 md.push(`| Operator marks in this store (from the Investigate tab; evidence, not training) | ${marks.marks ? `${marks.marks} (${marks.right} right, ${marks.wrong} wrong, ${marks.incomplete} incomplete) on ${marks.briefings} briefing${marks.briefings === 1 ? '' : 's'} across ${marks.cases} case${marks.cases === 1 ? '' : 's'}: ${Object.entries(marks.byModel).map(([m, v]) => `${m} ${v.right}/${v.marks} right`).join(', ')}` : 'none yet'} |`);
 md.push('');
 if (Object.keys(byType).length > 1) {

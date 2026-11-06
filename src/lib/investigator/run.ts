@@ -5,7 +5,7 @@
 import { parseBriefing, SYSTEM_PROMPT, userPrompt } from "./briefing";
 import { citableIds } from "./case-file";
 import { checkBriefing, citedIds } from "./check";
-import { callModel, costUsd, type ModelRequest, type ModelResponse } from "./model";
+import { callModel, costUsd, DEFAULT_MAX_TOKENS, type ModelRequest, type ModelResponse } from "./model";
 import { caseRecords, renderCase } from "./store";
 import type { BriefingRun, Expected, InvestigatorCase } from "./types";
 
@@ -19,33 +19,48 @@ export type RunOptions = {
 
 let runCounter = 0;
 
-export async function runBriefing(c: InvestigatorCase, opts: RunOptions): Promise<BriefingRun> {
+/**
+ * Produce one briefing on the case as it stands, without recording it: render
+ * the file, ask the model, parse, check, cost. The run carries the hash of the
+ * file it read, what the call was allowed (cap, effort) and why the model
+ * stopped. The server calls this outside its load–save window and records the
+ * run afterwards (the fourth review, 6 Nov 2026, F1); the scripts use
+ * runBriefing, which records in place.
+ */
+export async function produceBriefing(c: InvestigatorCase, opts: RunOptions): Promise<BriefingRun> {
   const rendered = renderCase(c);
   const citable = citableIds(caseRecords(c));
   const at = new Date().toISOString();
   const id = `${c.id}-run-${++runCounter}-${at.replace(/\D/g, "").slice(0, 14)}`;
   const call = opts.call ?? callModel;
-  const base = { id, at, model: opts.model, caseHash: rendered.hash, evidenceCount: c.evidence.length };
+  const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const base = { id, at, model: opts.model, caseHash: rendered.hash, evidenceCount: c.evidence.length, maxTokens, effort: opts.effort ?? null };
+  const started = Date.now();
   let res: ModelResponse;
   try {
-    res = await call({ model: opts.model, system: SYSTEM_PROMPT, user: userPrompt(rendered.text), apiKey: opts.apiKey ?? "", effort: opts.effort, maxTokens: opts.maxTokens });
+    res = await call({ model: opts.model, system: SYSTEM_PROMPT, user: userPrompt(rendered.text), apiKey: opts.apiKey ?? "", effort: opts.effort, maxTokens });
   } catch (err) {
-    const run: BriefingRun = { ...base, inputTokens: 0, outputTokens: 0, ms: 0, costUsd: 0, raw: "", briefing: null, check: checkBriefing(null, citable, ["the model call failed"]), error: (err as Error).message };
-    c.runs.push(run);
-    return run;
+    // A failed call still took its time (a timeout is the slowest run there is); its cost is unknown, not nil.
+    return { ...base, inputTokens: 0, outputTokens: 0, ms: Date.now() - started, costUsd: null, stopReason: null, raw: "", briefing: null, check: checkBriefing(null, citable, ["the model call failed"]), error: (err as Error).message };
   }
   const parsed = parseBriefing(res.text);
   const check = checkBriefing(parsed.briefing, citable, parsed.shapeErrors);
-  const run: BriefingRun = {
+  return {
     ...base,
     inputTokens: res.inputTokens,
     outputTokens: res.outputTokens,
     ms: res.ms,
     costUsd: costUsd(opts.model, res.inputTokens, res.outputTokens),
+    stopReason: res.stopReason,
     raw: res.text,
     briefing: parsed.briefing,
     check,
   };
+}
+
+/** Produce a briefing and record it on the case. For the scripts, which hold the store in memory. */
+export async function runBriefing(c: InvestigatorCase, opts: RunOptions): Promise<BriefingRun> {
+  const run = await produceBriefing(c, opts);
   c.runs.push(run);
   return run;
 }

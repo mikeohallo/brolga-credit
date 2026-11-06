@@ -31,7 +31,7 @@ this file never do.
 
 - `npm ci` (never `npm install`; the lockfile is the record of what runs).
 - `node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json`
-  — expect 65 passed, 0 failed; stop on any failure (two blocked network attempts are
+  — expect 68 passed, 0 failed; stop on any failure (two blocked network attempts are
   expected: T57 and T61 prove the model path is blocked offline). The suite ignores the
   investigator variables below, so a line may set them for every command.
 - Build: `npm run build`. Run: `npm start` (binds to 127.0.0.1; never add `-H 0.0.0.0`).
@@ -51,19 +51,25 @@ this file never do.
   when the server has the key and the store has the cases, skipped with a note otherwise.
   It never marks a briefing.
 - Investigator (`evaluate`): `node --disable-warning=ExperimentalWarning scripts/investigate-cases.mjs --render`
-  (60 cases, 20 held back by position; prints a hash per case; `--carry-from <store>` copies
-  the briefings, evidence and marks of an earlier store into the new one where the records
-  are identical, so a regeneration for new labels keeps what operators have done), then
+  (60 cases, 20 held back by position; prints a hash per case and checks all sixty against
+  `tests/review/investigator-hashes.json`, the published sealed set, saying loudly which
+  moved; `--carry-from <store>` copies the briefings, evidence and marks of an earlier store
+  into the new one where the sealed file and the prepared evidence are identical, so a
+  regeneration for new labels keeps what operators have done; `--update-manifest` is only
+  for a deliberate new sealed set, said in the decisions log), then
   `scripts/investigate-demo.mjs` and `scripts/investigate-eval.mjs` with the case, set
   (`--set dev|heldback|all`), model and trials Mike's line names. They read
   `BROLGA_INVESTIGATOR_KEY` from `.env.local` (or the file `BROLGA_ENV_FILE` names) and
   write reports to `reports/` (or `BROLGA_REPORTS_DIR`) and read and write the cases
-  file at `data/investigator.mock.json` (or `BROLGA_INVESTIGATOR_STORE`); only the model
+  file where the server reads it (`BROLGA_INVESTIGATOR_STORE`, else `data/investigator.mock.json`
+  or `data/investigator.json` for the mode `.env.local` configures); only the model
   calls leave the machine. The eval reads the store it is pointed at and never writes it,
   so pointing it at a store with Mike's marks is how the report's operator-marks line is
-  filled. The held-back set is run only when Mike's line says so, and only by the eval
-  script (the tab refuses it). Report the case hashes, the demo file's path and the eval
-  summary; never print `.env.local`, the key or a report in full.
+  filled; it refuses a store whose sealed hashes differ from the manifest unless
+  `--allow-moved-hashes` is given, and then the report says so. The held-back set is run
+  only when Mike's line says so, and only by the eval script (the tab writes nothing on
+  it). Report the case hashes, the demo file's path and the eval summary; never print
+  `.env.local`, the key or a report in full.
 
 ## Never
 

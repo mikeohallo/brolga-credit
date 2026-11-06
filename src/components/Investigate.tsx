@@ -211,7 +211,7 @@ function CaseScreen({ id, models, keyPresent, onBack }: { id: string; models: Li
               "Write briefing"
             )}
           </button>
-          <button className="btn btn-secondary btn-sm" onClick={() => post("evidence", "evidence")} disabled={!!act.busy || !c.evidenceLeft} title={c.evidenceLeft ? `Append the next prepared record (${c.evidenceLeft} left); earlier ids do not change` : "No more prepared evidence for this case"}>
+          <button className="btn btn-secondary btn-sm" onClick={() => post("evidence", "evidence")} disabled={!!act.busy || !c.evidenceLeft || c.heldBack} title={c.heldBack ? HELD_BACK : c.evidenceLeft ? `Append the next prepared record (${c.evidenceLeft} left); earlier ids do not change` : "No more prepared evidence for this case"}>
             New evidence arrived
           </button>
         </div>
@@ -384,12 +384,12 @@ function BriefingCard({ run, n, c, models, busy, onJump, by, setBy, onMark }: { 
             </div>
             {b.next_step.would_settle_it && (
               <div className="mt-1.5 text-sm">
-                <span className="font-semibold">Would settle it:</span> {b.next_step.would_settle_it}
+                <span className="font-semibold">Would settle it:</span> {b.next_step.would_settle_it} <span className="text-xs text-ink-3">(the model&rsquo;s own words; not checked against the records)</span>
               </div>
             )}
           </section>
           <section className="text-xs text-ink-3">
-            <span className="font-semibold text-ink-2">Confidence {b.confidence.level}:</span> {b.confidence.reason}
+            <span className="font-semibold text-ink-2">Confidence {b.confidence.level}:</span> {b.confidence.reason} <span>(the model&rsquo;s own words; not checked against the records)</span>
           </section>
         </div>
       )}

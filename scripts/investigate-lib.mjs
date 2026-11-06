@@ -21,6 +21,11 @@ export function sourceLoader() {
  */
 export function readKey(variable) {
   if (process.env[variable]?.trim()) return process.env[variable].trim();
+  return envFileValue(variable);
+}
+
+/** One variable's value from .env.local (or the file BROLGA_ENV_FILE names), or null. Returned to the caller only. */
+export function envFileValue(variable) {
   const file = process.env.BROLGA_ENV_FILE?.trim() || path.join(root, '.env.local');
   if (fs.existsSync(file)) {
     for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -29,6 +34,39 @@ export function readKey(variable) {
     }
   }
   return null;
+}
+
+/**
+ * The mode the server will run in, decided the way `npm start` decides it: the
+ * environment first, then .env.local (which Next loads and a plain script does
+ * not), else sandbox when a token is configured and mock otherwise. The scripts
+ * use it only to pick the same investigator file as the server (the fourth
+ * review, 6 Nov 2026, F9: with .env.example's sandbox mode the cases landed in
+ * the mock file and the tab showed "No cases yet").
+ */
+export function serverMode() {
+  const m = (process.env.ZEPTO_MODE?.trim() || envFileValue('ZEPTO_MODE') || '').toLowerCase();
+  if (m === 'mock' || m === 'sandbox') return m;
+  return process.env.ZEPTO_TOKEN?.trim() || envFileValue('ZEPTO_TOKEN') ? 'sandbox' : 'mock';
+}
+
+/** The investigator's file as the server will read it: BROLGA_INVESTIGATOR_STORE, else the mode's file under data/. */
+export function storeFile() {
+  const configured = process.env.BROLGA_INVESTIGATOR_STORE?.trim();
+  if (configured) return path.resolve(root, configured);
+  return path.join(root, 'data', serverMode() === 'mock' ? 'investigator.mock.json' : 'investigator.json');
+}
+
+/** The sealed hashes the repo publishes, case id → hash, or null when the manifest is absent. */
+export const MANIFEST = path.join(root, 'tests', 'review', 'investigator-hashes.json');
+export function readManifest() {
+  return fs.existsSync(MANIFEST) ? JSON.parse(fs.readFileSync(MANIFEST, 'utf8')) : null;
+}
+
+/** Which cases of a store hash differently from the manifest (none when every sealed hash matches). */
+export function movedHashes(store, sealedHash, manifest = readManifest()) {
+  if (!manifest) return [];
+  return store.cases.filter((c) => manifest[c.id] !== sealedHash(c)).map((c) => ({ id: c.id, expected: manifest[c.id] ?? null, actual: sealedHash(c) }));
 }
 
 /** Where reports go: BROLGA_REPORTS_DIR when set (a folder outside the repo, say), else reports/ in the repo (git-ignored). */

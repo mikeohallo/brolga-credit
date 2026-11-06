@@ -8,7 +8,10 @@
 // answer reconciled ahead of the CoP gate; the verdict recorded at submission), T54–T59
 // for the Payments Exception Investigator's spine and its six case generators, and
 // T60–T63 for the Investigate tab's server routes (29 Oct 2026), T64 for the report's
-// operator-marks line and T65 for carrying state across a regeneration (6 Nov 2026). Runs
+// operator-marks line and T65 for carrying state across a regeneration (6 Nov 2026), and
+// T66–T68 after the fourth review (6 Nov 2026: the published hashes pinned; a mark saved
+// during a briefing survives; the tab writes nothing on held-back cases and the label
+// leaves the server only after a mark). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -1088,6 +1091,110 @@ try {
     assert.equal(by['T5-07'].expected.nextStep, 'insufficient_evidence');
     assert.ok(!rp.some((x) => x.expected.nextStep === 'wait_for_provider'), 'a returned-payout case still expects wait_for_provider');
     note({ carried, sealedHash, relabelled: ['T5-02', 'T5-06'] });
+  });
+  // T66–T68: after the fourth review (6 Nov 2026), which read the investigator with no part in writing it.
+  await test('T66', 'The sixty sealed cases hash exactly as the repo publishes them', 'Generated here under the cases script\'s own clock, every case\'s sealed rendering (its captured records and question, no evidence) hashes to the value in tests/review/investigator-hashes.json: sixty entries, sixty matches, the same ids; so a store whose hashes differ is a different set, and the eval refuses one unless told the difference is meant.', async () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/review/investigator-hashes.json'), 'utf8'));
+    assert.equal(Object.keys(manifest).length, 60);
+    // Exactly what scripts/investigate-cases.mjs does: a reset mock and store, the clock at
+    // Tuesday 13 October 2026, 09:30 Sydney, the real generators.
+    time = RealDate.parse('2026-10-12T22:30:00Z');
+    resetMock();
+    db.resetDb();
+    const cases = await allCases.generateAllCases({ advance });
+    assert.deepEqual(cases.map((c) => c.id), Object.keys(manifest));
+    const moved = cases.filter((c) => inv.store.sealedHash(c) !== manifest[c.id]).map((c) => `${c.id} ${manifest[c.id]} → ${inv.store.sealedHash(c)}`);
+    assert.deepEqual(moved, [], 'sealed hashes differ from the manifest');
+    const lib = await import(pathToFileURL(path.join(root, 'scripts/investigate-lib.mjs')).href);
+    assert.deepEqual(lib.movedHashes({ cases }, inv.store.sealedHash, manifest), []);
+    const altered = structuredClone(cases); altered[7].records[0].text += ' (changed)';
+    assert.deepEqual(lib.movedHashes({ cases: altered }, inv.store.sealedHash, manifest).map((m) => m.id), [altered[7].id]);
+    note({ cases: cases.length, matched: cases.length - moved.length, first: `${cases[0].id} ${manifest[cases[0].id]}`, last: `${cases[59].id} ${manifest[cases[59].id]}` });
+  });
+  await test('T67', 'A mark or a record saved while a briefing is being written survives, and the run records what the call was given', 'With the model answered by an in-memory stand-in for the Messages API that takes its time, the brief route reads the case, waits for the answer and only then records the run; a record appended to another case and a mark given on it in the meantime are both still in the file afterwards, the run is recorded on its own case with the hash of the file it read, and it carries the output cap, the effort setting (the default) and the API\'s stop reason; the stand-in was called exactly once, with the key in its header and nowhere in any response.', async () => {
+    const cases = await tenCases();
+    const file = inv.store.storePath();
+    const envFile = path.join(stateDir, 'race.env.local');
+    fs.writeFileSync(envFile, 'ZEPTO_MODE=mock\nBROLGA_INVESTIGATOR_KEY="not-a-key-either"\n');
+    process.env.BROLGA_ENV_FILE = envFile;
+    const blockedBefore = blockedNetworkAttempts();
+    const t101 = cases.find((c) => c.id === 'T1-01'), t102 = cases.find((c) => c.id === 'T1-02');
+    const store = inv.store.loadStore(file);
+    const earlier = await inv.run.runBriefing(store.cases.find((c) => c.id === 'T1-02'), { model: 'claude-opus-5-5', call: cannedCall(soundBriefing(t102)) });
+    inv.store.saveStore(store, file);
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), key: init?.headers?.['x-api-key'] });
+      await new Promise((r) => setTimeout(r, 80));
+      return { ok: true, status: 200, headers: new Headers({ 'request-id': 'req_stand_in' }), json: async () => ({ content: [{ type: 'text', text: '```json\n' + JSON.stringify(soundBriefing(t101)) + '\n```' }], usage: { input_tokens: 1234, output_tokens: 321 }, stop_reason: 'end_turn' }) };
+    };
+    try {
+      const briefing = invRoutes.brief.POST(request('/api/investigate/T1-01/brief', { model: 'claude-opus-5-5' }), params('T1-01'));
+      await new Promise((r) => setTimeout(r, 20)); // the brief route has read its copy and is waiting on the model
+      const evRes = await invRoutes.evidence.POST(request('/api/investigate/T1-02/evidence', {}), params('T1-02'));
+      assert.equal(evRes.status, 200);
+      const markRes = await invRoutes.mark.POST(request('/api/investigate/T1-02/mark', { runId: earlier.id, verdict: 'right', by: 'reviewer' }), params('T1-02'));
+      assert.equal(markRes.status, 200);
+      const briefRes = await briefing;
+      assert.equal(briefRes.status, 200);
+      const body = await briefRes.json();
+      const after = inv.store.loadStore(file);
+      const a101 = after.cases.find((c) => c.id === 'T1-01'), a102 = after.cases.find((c) => c.id === 'T1-02');
+      assert.equal(a102.evidence.length, 1, 'the record added during the briefing was lost');
+      assert.equal(a102.marks.length, 1, 'the mark given during the briefing was lost');
+      assert.equal(a102.marks[0].runId, earlier.id);
+      assert.equal(a101.runs.length, 1);
+      const run = a101.runs[0];
+      assert.ok(run.check.accepted && run.briefing?.diagnosis === 'outcome_unknown');
+      assert.equal(run.caseHash, inv.store.renderCase(a101).hash);
+      assert.deepEqual({ maxTokens: run.maxTokens, effort: run.effort, stopReason: run.stopReason, inputTokens: run.inputTokens, outputTokens: run.outputTokens }, { maxTokens: 16000, effort: null, stopReason: 'end_turn', inputTokens: 1234, outputTokens: 321 });
+      assert.equal(calls.length, 1);
+      assert.ok(/\/v1\/messages$/.test(calls[0].url) && calls[0].key === 'not-a-key-either');
+      assert.ok(!JSON.stringify(body).includes('not-a-key-either') && !fs.readFileSync(file, 'utf8').includes('not-a-key-either'));
+      assert.equal(blockedNetworkAttempts(), blockedBefore);
+      note({ evidenceKept: a102.evidence.length, markKept: a102.marks.length, run: { maxTokens: run.maxTokens, effort: run.effort, stopReason: run.stopReason, caseHash: run.caseHash }, standInCalls: calls.length });
+    } finally {
+      delete process.env.BROLGA_ENV_FILE;
+      globalThis.fetch = blockedFetch;
+    }
+  });
+  await test('T68', 'The tab writes nothing on a held-back case, the label leaves the server only after a mark, a label is an own property, and a carry refuses a case whose file it cannot reproduce', 'The evidence route answers 403 on a held-back case and changes nothing; a case is returned with no expected label until it has a mark, and with it afterwards; "constructor" and "__proto__" are not labels; carrying state refuses a case whose question was reworded or whose prepared evidence changed, even with identical records, and carries one that is the same.', async () => {
+    const cases = await tenCases();
+    const file = inv.store.storePath();
+    const before = JSON.stringify(inv.store.loadStore(file));
+    const held = await invRoutes.evidence.POST(request('/api/investigate/T1-03/evidence', {}), params('T1-03'));
+    assert.equal(held.status, 403);
+    assert.ok(/held back/.test((await held.json()).error.detail));
+    assert.equal(JSON.stringify(inv.store.loadStore(file)), before);
+    const unmarked = (await (await getCase('T1-01')).json()).case;
+    assert.equal(unmarked.expected, null);
+    assert.equal(unmarked.expectedNow, null);
+    assert.ok(!JSON.stringify(unmarked).includes('tempting'));
+    const store = inv.store.loadStore(file);
+    const c = store.cases.find((x) => x.id === 'T1-01');
+    const run = await inv.run.runBriefing(c, { model: 'claude-opus-5-5', call: cannedCall(soundBriefing(cases.find((x) => x.id === 'T1-01'))) });
+    inv.store.saveStore(store, file);
+    assert.equal((await invRoutes.mark.POST(request('/api/investigate/T1-01/mark', { runId: run.id, verdict: 'right' }), params('T1-01'))).status, 200);
+    const marked = (await (await getCase('T1-01')).json()).case;
+    assert.equal(marked.expected?.diagnosis, 'outcome_unknown');
+    assert.equal(marked.expectedNow?.diagnosis, 'outcome_unknown');
+    const labels = await source('src/lib/investigator/labels.ts');
+    for (const bad of ['constructor', '__proto__', 'hasOwnProperty', 'toString']) assert.ok(!labels.isDiagnosis(bad) && !labels.isNextStep(bad), `${bad} passed as a label`);
+    assert.ok(labels.isDiagnosis('outcome_unknown') && labels.isNextStep('insufficient_evidence'));
+    const parsed = inv.briefing.parseBriefing('```json\n' + JSON.stringify({ ...soundBriefing(cases[0]), diagnosis: 'constructor', explanations: [{ rank: 1, diagnosis: 'constructor', summary: 'x', supporting_ids: [cases[0].records[0].id], against_ids: [] }] }) + '\n```');
+    assert.ok(parsed.shapeErrors.some((e) => /constructor/.test(e)), 'a prototype name was accepted as a diagnosis');
+    const earlierCases = await inv.timeout.generateTimeoutCases({ advance });
+    const e0 = earlierCases[0];
+    await inv.run.runBriefing(e0, { model: 'claude-opus-5-5', call: cannedCall(soundBriefing(e0)) });
+    const earlier = { version: 1, generatedAt: new Date().toISOString(), generator: 'suite', cases: earlierCases };
+    const freshFrom = () => ({ version: 1, generatedAt: new Date().toISOString(), generator: 'suite', cases: earlierCases.map((x) => ({ ...structuredClone(x), evidence: [], runs: [], marks: [] })) });
+    assert.deepEqual(inv.store.carryState(freshFrom(), earlier).cases, 1);
+    const reworded = freshFrom(); reworded.cases[0].question += ' Also: is anything owed?';
+    assert.deepEqual(reworded.cases[0].records, e0.records);
+    assert.throws(() => inv.store.carryState(reworded, earlier), /records differ/);
+    const changedEvidence = freshFrom(); changedEvidence.cases[0].preparedEvidence[0].text += ' (a different answer)';
+    assert.throws(() => inv.store.carryState(changedEvidence, earlier), /prepared evidence differs/);
+    note({ heldBackEvidenceStatus: held.status, labelBeforeMark: unmarked.expected, labelAfterMark: marked.expected?.diagnosis, prototypeNamesRejected: true, carryRefusals: ['reworded question', 'changed prepared evidence'] });
   });
 } finally {
   globalThis.Date = RealDate;

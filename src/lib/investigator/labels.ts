@@ -112,10 +112,13 @@ export const NEXT_STEPS: Record<NextStep, string> = {
   escalate: "A person with more context must decide: a payment may have gone somewhere it should not have, or the records conflict in a way the desk cannot resolve.",
 };
 
+// Own properties only: "constructor" or "__proto__" is not a label (the fourth
+// review, 6 Nov 2026, F7: `in` walks the prototype chain and would have let one
+// through to the screen).
 export function isDiagnosis(s: unknown): s is Diagnosis {
-  return typeof s === "string" && s in DIAGNOSES;
+  return typeof s === "string" && Object.hasOwn(DIAGNOSES, s);
 }
 
 export function isNextStep(s: unknown): s is NextStep {
-  return typeof s === "string" && s in NEXT_STEPS;
+  return typeof s === "string" && Object.hasOwn(NEXT_STEPS, s);
 }
