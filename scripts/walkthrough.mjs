@@ -1,4 +1,5 @@
-// End-to-end walkthrough of the Brolga demo against a running server (mock or sandbox).
+// End-to-end walkthrough of the Brolga demo against a running server (mock or sandbox),
+// ending with one investigation in the Investigate tab (two model calls when a key is set).
 // Usage: node scripts/walkthrough.mjs [baseUrl] [screenshotDir]
 import { chromium } from "playwright";
 import fs from "node:fs";
@@ -124,6 +125,50 @@ await page.click("button:has-text('Simulate a returned payment')");
 await page.waitForSelector("text=Disbursement failed", { timeout: 40000 });
 await wait(800);
 await shot("18-disbursement-failed");
+
+// The Payments Exception Investigator: one investigation on the prepared demo case.
+// Needs the cases (scripts/investigate-cases.mjs) in the store the server reads; the two
+// briefings are real model calls (about 7 cents each on Opus) and need the key on the
+// server. Without the cases or the key the tab is still shown, and the briefing steps are
+// skipped with a note. The walkthrough never marks a briefing: a mark is a person's.
+await page.goto(`${base}/operations`);
+await page.waitForSelector("text=GET /transactions");
+await page.click("button:has-text('Investigate')");
+const investigate = await (await fetch(`${base}/api/investigate`)).json().catch(() => null);
+if (!investigate?.cases?.length) {
+  console.log("investigate: no cases in the store; run scripts/investigate-cases.mjs first; skipping the briefing");
+  await wait(1200);
+  await shot("19-investigate-no-cases");
+} else {
+  await page.waitForSelector("tr:has-text('T1-01')");
+  await wait(1200);
+  await shot("19-investigate-cases");
+  await page.click("tr:has-text('T1-01')");
+  await page.waitForSelector("button:has-text('Write briefing')");
+  await wait(800);
+  await shot("20-investigate-case");
+  if (!investigate.keyPresent) {
+    console.log("investigate: no key configured on the server; skipping the briefing");
+  } else {
+    await page.selectOption("select[title]", "claude-opus-5-5");
+    await page.click("button:has-text('Write briefing')");
+    await page.waitForSelector("text=citation check", { timeout: 180000 }); // accepted or rejected: both are shown
+    await wait(1200);
+    await shot("21-investigate-briefing");
+    const evidence = page.locator("button:has-text('New evidence arrived')");
+    if (await evidence.isEnabled()) {
+      await evidence.click();
+      await page.waitForSelector("text=new evidence");
+      await page.click("button:has-text('Write briefing')");
+      await page.waitForSelector("text=Briefing 2", { timeout: 180000 });
+      await page.waitForSelector("h2:has-text('Briefing 2') >> text=citation check", { timeout: 180000 });
+      await wait(1200);
+      await shot("22-investigate-after-evidence");
+    } else {
+      console.log("investigate: no prepared evidence left on T1-01 (an earlier run added it); one briefing shown");
+    }
+  }
+}
 
 await browser.close();
 console.log("done");

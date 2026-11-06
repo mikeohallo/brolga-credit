@@ -7,7 +7,8 @@
 // logged paths), and T51–T53 after the third assessment of 17 October (lost payout
 // answer reconciled ahead of the CoP gate; the verdict recorded at submission), T54–T59
 // for the Payments Exception Investigator's spine and its six case generators, and
-// T60–T63 for the Investigate tab's server routes (29 Oct 2026). Runs
+// T60–T63 for the Investigate tab's server routes (29 Oct 2026), and T64 for the
+// report's operator-marks line (6 Nov 2026). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -30,6 +31,10 @@ process.env.ZEPTO_MODE = 'mock';
 process.env.MOCK_FLOAT = '0';
 delete process.env.ZEPTO_TOKEN;
 delete process.env.ZEPTO_BASE_URL;
+// The investigator's run-line variables point a real run at Mike's key, his store
+// and his reports folder. The suite must see none of them: T60–T63 assume no key
+// and a store in this state directory, and must never write to a real one.
+for (const v of ['BROLGA_ENV_FILE', 'BROLGA_INVESTIGATOR_STORE', 'BROLGA_REPORTS_DIR', 'BROLGA_INVESTIGATOR_KEY']) delete process.env[v];
 installSourceLoader(root);
 const blockedNetworkAttempts = prohibitNetwork();
 const blockedFetch = globalThis.fetch;
@@ -912,7 +917,7 @@ try {
     note({ cases: list.cases.length, heldBack: list.cases.filter((c) => c.heldBack).map((c) => c.id), models: list.models.map((m) => m.id), hash: c.rendered.hash, words: c.rendered.wordCount });
   });
   await test('T61', 'Write briefing refuses without a key and never reaches the network; with the key the scripts would read, it makes exactly one blocked call and records the failure', 'Without a key the brief route answers 400 naming the variable, records nothing and makes no network attempt; an unknown model and a held-back case are refused the same way; with BROLGA_INVESTIGATOR_KEY in the file BROLGA_ENV_FILE names, the route finds it exactly as scripts/investigate-lib.mjs does, makes one call that the suite\'s guard blocks, records the run as a failed call stamped with the file\'s hash and the model, and no response or file ever carries the key.', async () => {
-    const cases = await tenCases();
+    await tenCases();
     const file = inv.store.storePath();
     const envBefore = process.env.BROLGA_INVESTIGATOR_KEY;
     delete process.env.BROLGA_INVESTIGATOR_KEY;
@@ -1030,6 +1035,27 @@ try {
     assert.equal(none.status, 404);
     assert.ok(/No cases yet/.test((await none.json()).error.detail));
     note({ configured: path.relative(stateDir, elsewhere), defaultFile: path.relative(stateDir, defaultPath) });
+  });
+  await test('T64', 'The report counts operator marks as they are, and the suite runs the same whatever the run line set', 'A store with two Right marks on two briefings of one case and one Wrong on another case reports 3 marks (2 right, 1 wrong), 3 briefings, 2 cases, split by model and listing who marked; an empty store reports none; and the four run-line variables are absent here even though a caller may have set them, so no check in this suite can reach a real key, store or reports folder.', async () => {
+    const cases = await tenCases();
+    const c1 = cases[0], c2 = cases[1];
+    const sound = soundBriefing(c1);
+    const r1 = await inv.run.runBriefing(c1, { model: 'claude-opus-5-5', call: cannedCall(sound) });
+    inv.store.addEvidence(c1);
+    const r2 = await inv.run.runBriefing(c1, { model: 'claude-opus-5-5', call: cannedCall(soundBriefing(c1)) });
+    const r3 = await inv.run.runBriefing(c2, { model: 'claude-haiku-5-5', call: cannedCall(soundBriefing(c2)) });
+    inv.store.addMark(c1, { runId: r1.id, verdict: 'right' });
+    inv.store.addMark(c1, { runId: r2.id, verdict: 'right', by: 'reviewer', note: ' fine ' });
+    inv.store.addMark(c2, { runId: r3.id, verdict: 'wrong', by: 'reviewer' });
+    const store = { version: 1, generatedAt: new Date().toISOString(), generator: 'suite', cases };
+    const m = inv.store.summariseMarks(store);
+    assert.deepEqual({ marks: m.marks, right: m.right, wrong: m.wrong, incomplete: m.incomplete, briefings: m.briefings, cases: m.cases, markers: m.markers }, { marks: 3, right: 2, wrong: 1, incomplete: 0, briefings: 3, cases: 2, markers: ['operator', 'reviewer'] });
+    assert.deepEqual(m.byModel, { 'claude-opus-5-5': { marks: 2, right: 2, wrong: 0, incomplete: 0 }, 'claude-haiku-5-5': { marks: 1, right: 0, wrong: 1, incomplete: 0 } });
+    assert.equal(c1.marks[1].note, 'fine');
+    const none = inv.store.summariseMarks({ version: 1, generatedAt: '', generator: 'suite', cases: cases.map((c) => ({ ...c, marks: [] })) });
+    assert.equal(none.marks, 0);
+    for (const v of ['BROLGA_ENV_FILE', 'BROLGA_INVESTIGATOR_STORE', 'BROLGA_REPORTS_DIR', 'BROLGA_INVESTIGATOR_KEY']) assert.equal(process.env[v], undefined, `${v} reached the suite`);
+    note({ summary: m, variablesCleared: true });
   });
 } finally {
   globalThis.Date = RealDate;

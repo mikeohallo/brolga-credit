@@ -16,7 +16,7 @@ import { arg, readKey, reportsDir, root, secs, sourceLoader, stamp, usd } from '
 
 const source = sourceLoader();
 const { KEY_VARIABLE, PRICES_USD_PER_MTOK } = await source('src/lib/investigator/model.ts');
-const { loadStore, storePath } = await source('src/lib/investigator/store.ts');
+const { loadStore, storePath, summariseMarks } = await source('src/lib/investigator/store.ts');
 const { runBriefing, scoreRun } = await source('src/lib/investigator/run.ts');
 const { PROMPT_VERSION } = await source('src/lib/investigator/briefing.ts');
 
@@ -91,6 +91,7 @@ const msList = results.map((r) => r.run.ms).filter((m) => m > 0).sort((a, b) => 
 const median = msList.length ? msList[Math.floor(msList.length / 2)] : 0;
 const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(0)}% (${a}/${b})` : 'n/a');
 
+const marks = summariseMarks(store);
 const byType = {};
 for (const r of results) {
   const t = store.cases.find((c) => c.id === r.caseId).type;
@@ -102,7 +103,7 @@ for (const r of results) {
 }
 
 const summary = {
-  type, set, model, effort: effort ?? 'API default', prompt: PROMPT_VERSION, generator: store.generator, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), byType,
+  type, set, model, effort: effort ?? 'API default', prompt: PROMPT_VERSION, generator: store.generator, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), byType, operatorMarks: marks,
   cases: cases.length, trials, runs: n, errors, accepted, rejectedShape, rejectedCitations,
   diagnosisAccuracy: diagnosisCorrect / n, nextStepAccuracy: nextStepCorrect / n, requiredRecordsCited: citedMustCite / n,
   correctInsufficientEvidence: expInsufficient.length ? correctInsufficient / expInsufficient.length : null,
@@ -131,6 +132,7 @@ md.push(`| Model calls that failed | ${pct(errors, n)} |`);
 md.push(`| Cost per case (all ${n} runs, failed and rejected included) | ${costKnown ? usd(cost / n) : 'unknown: no price on file'} |`);
 md.push(`| Cost, whole run | ${costKnown ? usd(cost) : 'unknown'} (${summary.inputTokens} tokens in, ${summary.outputTokens} out) |`);
 md.push(`| Time per case, median / mean | ${secs(median)} / ${secs(summary.meanMs)} |`);
+md.push(`| Operator marks in this store (from the Investigate tab; evidence, not training) | ${marks.marks ? `${marks.marks} (${marks.right} right, ${marks.wrong} wrong, ${marks.incomplete} incomplete) on ${marks.briefings} briefing${marks.briefings === 1 ? '' : 's'} across ${marks.cases} case${marks.cases === 1 ? '' : 's'}: ${Object.entries(marks.byModel).map(([m, v]) => `${m} ${v.right}/${v.marks} right`).join(', ')}` : 'none yet'} |`);
 md.push('');
 if (Object.keys(byType).length > 1) {
   md.push('## By type');

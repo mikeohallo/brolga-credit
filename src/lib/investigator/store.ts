@@ -87,3 +87,40 @@ export function addMark(c: InvestigatorCase, input: { runId: string; verdict: Ma
 export function expectedNow(c: InvestigatorCase) {
   return c.evidence.length && c.expectedAfterEvidence ? c.expectedAfterEvidence : c.expected;
 }
+
+/**
+ * What the operators have said about the briefings in this store, for the
+ * report: how many marks, which verdicts, on how many briefings and cases, by
+ * model. Marks are evidence, never training; the report says the real count.
+ */
+export type MarksSummary = {
+  marks: number;
+  right: number;
+  wrong: number;
+  incomplete: number;
+  briefings: number; // distinct briefings marked
+  cases: number; // distinct cases with a mark
+  byModel: Record<string, { marks: number; right: number; wrong: number; incomplete: number }>;
+  markers: string[]; // distinct "by" values, as given
+};
+
+export function summariseMarks(store: InvestigatorStore): MarksSummary {
+  const out: MarksSummary = { marks: 0, right: 0, wrong: 0, incomplete: 0, briefings: 0, cases: 0, byModel: {}, markers: [] };
+  const runs = new Set<string>();
+  const markers = new Set<string>();
+  for (const c of store.cases) {
+    if (c.marks.length) out.cases += 1;
+    for (const m of c.marks) {
+      out.marks += 1;
+      out[m.verdict] += 1;
+      runs.add(`${c.id}/${m.runId}`);
+      markers.add(m.by);
+      const bm = (out.byModel[m.model] ??= { marks: 0, right: 0, wrong: 0, incomplete: 0 });
+      bm.marks += 1;
+      bm[m.verdict] += 1;
+    }
+  }
+  out.briefings = runs.size;
+  out.markers = [...markers].sort();
+  return out;
+}

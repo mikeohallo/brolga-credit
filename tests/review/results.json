@@ -1,6 +1,6 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-10-29T03:34:16.596Z",
+  "executedAt": "2026-11-06T04:37:57.949Z",
   "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 2,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 63,
-  "passed": 63,
+  "total": 64,
+  "passed": 64,
   "failed": 0,
   "results": [
     {
@@ -929,6 +929,41 @@
       "observations": {
         "configured": "elsewhere/investigator.mock.json",
         "defaultFile": "data/investigator.mock.json"
+      }
+    },
+    {
+      "id": "T64",
+      "name": "The report counts operator marks as they are, and the suite runs the same whatever the run line set",
+      "expectation": "A store with two Right marks on two briefings of one case and one Wrong on another case reports 3 marks (2 right, 1 wrong), 3 briefings, 2 cases, split by model and listing who marked; an empty store reports none; and the four run-line variables are absent here even though a caller may have set them, so no check in this suite can reach a real key, store or reports folder.",
+      "result": "PASS",
+      "observations": {
+        "summary": {
+          "marks": 3,
+          "right": 2,
+          "wrong": 1,
+          "incomplete": 0,
+          "briefings": 3,
+          "cases": 2,
+          "byModel": {
+            "claude-opus-5-5": {
+              "marks": 2,
+              "right": 2,
+              "wrong": 0,
+              "incomplete": 0
+            },
+            "claude-haiku-5-5": {
+              "marks": 1,
+              "right": 0,
+              "wrong": 1,
+              "incomplete": 0
+            }
+          },
+          "markers": [
+            "operator",
+            "reviewer"
+          ]
+        },
+        "variablesCleared": true
       }
     }
   ]
