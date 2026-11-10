@@ -18,16 +18,63 @@ A demo, not a product.
 12 September 2026 (Direct Entry disbursement, PayTo agreement, real-time collection with
 failure and retry, suspension, reactivation, bilateral amendment, cancellation). 68 offline
 checks run the real domain code against a mock provider with a controllable clock, on
-every push (badge above). Three independent reviews shaped them. The first review's harness
+every push (badge above). Four independent reviews shaped them. The first review's harness
 passed 14 of its 36 checks on its first run and became the regression suite. The second and
 third found eight more cases it didn't cover, among them two overlapping disbursements
 creating two payouts, and a lost payout answer left unreconciled behind a Confirmation of
 Payee hold. T46 to T53 reproduce them: each fails on the old code and passes on the fix.
 
-**Where the AI is:** nowhere in the product. No model runs when money moves. Claude wrote
-the code and the tests under a product owner's direction, and sessions with no part in
+**The Payments Exception Investigator, measured:** an operations tool inside the app (the
+Investigate tab) that reads a case file of a payment gone wrong, writes a briefing that
+cites the records, and says "insufficient evidence" when that is the answer. On
+6 November 2026 its sixty synthetic cases (six kinds of exception, ten of each; twenty
+held back by position and never looked at while the prompt was written) were run three
+times each on three models, 180 briefings a model, with every rejected briefing counted
+as wrong:
+
+| 6 Nov 2026 · prompt v1.1 · all 180 runs a model · held back 60 of them | claude-haiku-5-5 | claude-sonnet-5-5 | claude-opus-5-5 |
+|---|---|---|---|
+| Diagnosis right: all 180 · held back 60 | 84% (152/180) · 52/60 | 97% (174/180) · 59/60 | **100%** (180/180) · 60/60 |
+| Next step right: all 180 · held back 60 | 73% (132/180) · 43/60 | 94% (169/180) · 54/60 | 97% (174/180) · 54/60 |
+| Said "insufficient evidence" when it should (39 runs over all sixty: 13 such cases × 3) | 34 | 35 | 39 |
+| Claims with no record behind them, or a record not in the file (of every claim in all 180 runs) | 9 of 3,280 | 1 of 2,933 | 0 of 3,360 |
+| Briefings rejected by code before anyone saw them (of 180) | 23 | 4 | 0 |
+| Cost a briefing (one run; rejected runs included) | $0.0023 | $0.0301 | $0.0669 |
+
+Only the two accuracy rows are split out for the held-back twenty; the other rows are
+over all sixty cases, forty of which the prompt was developed against, and only two of the
+thirteen "insufficient evidence" cases fell in the held-back set (the split was by
+position, and that draw was thin). "Unsupported" here is what code can check: a claim
+with no record cited, or citing a record that is not in the file; whether a cited record
+actually supports the sentence is the operator's judgement, which the marks record. Code
+checks every citation before a briefing is shown, so none of the ten such claims reached an
+operator: the briefings carrying them were rejected, and count as wrong above. Every case
+file tells the model which kind of exception it is looking at, in its first line, as a
+desk's queue would tell an analyst; the diagnosis still has to pick one of three or more
+labels within that kind, but the kind itself is given, not found. By the bar the report
+sets (no unsupported claims, and "don't know" every time it should) only Opus 5.5 clears it; Sonnet 5.5 is four rejected briefings short, one of them
+an overclaim, at less than half the price; Haiku 5.5 misses a sixth of the diagnoses.
+Opus's six wrong next steps are two held-back cases, answered the same way three times of
+three by Opus and by Sonnet (T5-08: `no_action` where the label says `escalate`; T4-03:
+`insufficient_evidence` where the label says `reverify_payee`). The labels stand and the
+question is open. An earlier run the same day, with the harness capping answers at 4,000
+tokens, cut off 44 of Haiku's answers and 4 of Opus's; it is kept, and the table is the run
+after the cap was raised. Between the two runs one next-step definition was redrawn on a
+development case (T5-06), and that moved one held-back case's label with it (T5-02, now
+`reverify_payee`, which all three models chose three times of three); the held-back
+figures are against the labels as they stand (one next-step label, `wait_for_provider`,
+is now the right answer for no case and stays in the list only as a wrong turn). The
+whole run cost $17.88. The two briefings
+an operator has marked so far were both marked right. `scripts/investigate-eval.mjs`
+reproduces the run; the cases, their labels and the held-back split are in the repo, so
+any of the sixty can be checked.
+
+**Where the AI is:** in one place, the Investigate tab, where a model reads a case file
+and writes a briefing a person acts on. No model runs when money moves. Claude wrote the
+code and the tests under a product owner's direction, and sessions with no part in
 writing it reviewed it. The hardest findings were about uncertainty: a payment whose
-outcome is unknown must never be retried as if it had failed.
+outcome is unknown must never be retried as if it had failed; the investigator exists
+to say so, with the records cited.
 
 ![Brolga Credit loan page — repayment schedule, disbursement with debit and credit refs, PayTo agreement with lifecycle actions](docs/loan-page.png)
 
@@ -91,12 +138,21 @@ record behind it, add the prepared evidence and write again, and mark the
 briefing right, wrong or incomplete. Writing a briefing is one model call made by
 the server with the key in `.env.local` as `BROLGA_INVESTIGATOR_KEY`; without a
 key the tab shows the cases and says so. Twenty of the sixty are held back: the
-tab shows them but will not write on them, because they are run only once, by
-the eval script, for the numbers that will go at the top of this file. The
-model never moves money, never calls the provider and sees nothing but the case
-file; code checks every citation before a briefing is shown, and a person decides.
+tab shows them but will not write on them, because they are run only by the eval
+script, for the numbers at the top of this file. The model never moves money,
+never calls the provider and sees nothing but the case file; code checks every
+citation before a briefing is shown, and a person decides.
 `BROLGA_INVESTIGATOR_STORE` moves the investigator's file (cases, briefings,
 marks) out of `data/` if you want it somewhere that outlives a checkout.
+
+![The Investigate tab — a case file's records beside a briefing that cites them, after new evidence was added](docs/investigate.png)
+
+*The demo case (a timed-out payment; the borrower says the money left; the operator wants
+to retry), after the provider's answer arrived as new evidence: the case file on the left,
+the second briefing on the right. The first briefing, further down the page, refused to call
+the outcome known; the second, on the same records plus one, adopts the provider's record
+and cites the ids it rests on. Both written by Opus 5.5 and passed by the citation check.
+Taken by `scripts/walkthrough.mjs` in `mock` mode, 10 November 2026.*
 
 ## The story the demo tells
 
@@ -221,9 +277,20 @@ above and `.github/workflows/ci.yml`; it holds no secrets and makes no Zepto cal
 T54 to T68 cover the Payments Exception Investigator: the case file and its ids, the
 citation check, the scoring, the six case generators and the sixty-case set (T66 pins
 their sixty hashes to `tests/review/investigator-hashes.json`), and the Investigate tab's
-routes, including that a mark saved while a briefing is being written survives (T67, a
-fourth review's finding). They drive the whole pipeline with canned answers and prove
-the real model path is blocked offline; the suite never calls a model.
+routes. They drive the whole pipeline with canned answers and prove the real model path
+is blocked offline; the suite never calls a model.
+
+A fourth review, on 6 November 2026 by a session with no part in writing the
+investigator, read it before its numbers went at the top of this file. It found that
+writing a briefing held the store open across the model call and saved a stale copy back,
+so a mark or a record saved in those seconds was silently lost; T67 reproduces that and
+passes on the fix. It also made the measurement story above say more than it did at
+first: that the held-back set was run twice and why, which numbers are over all sixty
+cases and which over the twenty, what "unsupported" means to the code, and that the
+case file names the kind of exception. The rest of its findings (a carry that compared
+too little, a label check that walked the prototype chain, the expected label reaching the
+browser before a mark, held-back cases accepting evidence, "cost per case" that was cost
+per briefing) are fixed in the same commit, and the sixty hashes did not move.
 
 `CHROME_PATH=<chromium> node scripts/walkthrough.mjs http://localhost:3000 ./shots`
 drives the whole demo in a browser and saves a screenshot of each step, ending with one
@@ -244,8 +311,9 @@ before it was sent, so a lost answer could be recovered rather than guessed at.
 And the code was reviewed by a session that had no part in writing it: the first
 review's harness failed 22 of its 36 checks and became the test suite; the second,
 a month later, found a race and a gating gap that the first had missed; the third,
-the next day, found a lost payout answer stranded behind a Confirmation of Payee hold.
-All three are in the history.
+the next day, found a lost payout answer stranded behind a Confirmation of Payee hold;
+the fourth, on the investigator, found a lost update under a slow model call and four
+ways the numbers above needed to say more. All four are in the history.
 
 ## Things learned about the Zepto API while building this
 
