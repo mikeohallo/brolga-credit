@@ -245,7 +245,7 @@ Design choices worth knowing:
 node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json
 ```
 
-Sixty-five checks run the real domain code and route handlers against the mock
+Sixty-eight checks run the real domain code and route handlers against the mock
 provider with a controllable clock and no network: schedule arithmetic, the
 credit-is-the-truth disbursement rule, collection gating, lost-response
 recovery for both payouts and PayTo payments, restructure reconciliation,
