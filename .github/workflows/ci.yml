@@ -1,12 +1,12 @@
 name: CI
 
-# Public evidence that the offline suite and the build pass on every push.
-# No secrets, no Zepto calls: the suite blocks fetch and runs against the mock,
+# Public evidence that the offline suite and the build pass on every push, on every
+# branch. No secrets, no Zepto calls: the suite blocks fetch and runs against the mock,
 # and the build needs no token. This workflow never deploys anything.
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 permissions:
@@ -32,3 +32,56 @@ jobs:
         run: node -e "const r=require('./ci-results.json'); console.log(r.passed+'/'+r.total+' passed'); if(r.failed!==0||r.passed!==r.total) process.exit(1)"
       - run: npm run lint
       - run: npm run build
+
+  screens:
+    # The main pages at a phone and a laptop width, light and dark, compared with the
+    # same pages built from main (or, on main, from the commit before) in this same run,
+    # so both sides are drawn by one browser with one set of fonts. Fails only when a
+    # page is broken (not a 200, an error, an empty page); differences and pages wider
+    # than the screen are listed in the job summary for a person to look at. Mock mode:
+    # every page is synthetic, so the uploaded images carry nothing private.
+    name: Screenshot checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ZEPTO_MODE: mock
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Pick the base to compare against
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then base="${{ github.event.pull_request.base.sha }}";
+          elif [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then base="$(git rev-parse HEAD^)";
+          else base="$(git rev-parse origin/main)"; fi
+          echo "BASE=$base" >> "$GITHUB_ENV"; echo "Comparing with $base"
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start the app under test (port 3000)
+        run: |
+          nohup npm start > app.log 2>&1 &
+          for i in $(seq 60); do curl -sf -o /dev/null http://127.0.0.1:3000 && exit 0; sleep 1; done; cat app.log; exit 1
+      - name: Build and start the base (port 3001)
+        id: base
+        continue-on-error: true
+        run: |
+          git worktree add ../base "$BASE"
+          cd ../base && npm ci && npm run build
+          nohup npm start -- -p 3001 > ../base.log 2>&1 &
+          for i in $(seq 60); do curl -sf -o /dev/null http://127.0.0.1:3001 && exit 0; sleep 1; done; cat ../base.log; exit 1
+      - name: Screenshot checks
+        run: |
+          if [ "${{ steps.base.outcome }}" = "success" ]; then node scripts/screens.mjs http://127.0.0.1:3000 http://127.0.0.1:3001 screens;
+          else echo "The base did not start; checking this commit's pages alone." | tee -a "$GITHUB_STEP_SUMMARY"; node scripts/screens.mjs http://127.0.0.1:3000 "" screens; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens
+          path: screens/
+          retention-days: 14

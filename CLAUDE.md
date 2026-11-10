@@ -45,6 +45,10 @@ this file never do.
   has its sixty cases (the fake clock the cases need cannot run inside the server); **a
   run that resumes an existing store does not**, because the cases script overwrites the
   store it writes to, briefings and marks included. Mike's line says which.
+- Screenshot checks: CI's `screens` job runs `scripts/screens.mjs` on every push (six pages, phone and
+  laptop, light and dark, against main built in the same run). Locally, with the app on 3000 and
+  main on 3001: `node scripts/screens.mjs http://127.0.0.1:3000 http://127.0.0.1:3001 ./screens`.
+  Start both from an empty `data/`, or the pages differ by their data, not their code.
 - Walkthrough: `node scripts/walkthrough.mjs http://127.0.0.1:3000 ./shots` with
   `CHROME_PATH` set to a Chromium binary, in `mock` mode unless Mike's line says sandbox.
   It ends with one investigation in the Investigate tab: two model calls on the demo case
