@@ -18,9 +18,9 @@ export default function Operations() {
       <PageHeader kicker="Back office" title="Operations">
         The reconciliation view: what Zepto&rsquo;s ledger says, independent of what Brolga believes. Two API generations sit side by side here — legacy payouts with <Mono>D.*</Mono> refs and page numbers, PayTo with UUIDs and cursors. Under Investigate, the Payments Exception Investigator reads a case file and writes a briefing; a person decides.
       </PageHeader>
-      <div className="mb-4 flex gap-1 rounded-xl bg-neutral-soft p-1 text-sm">
+      <div className="mb-4 flex flex-wrap gap-1 rounded-xl bg-neutral-soft p-1 text-sm">
         {(["ledger", "payto", "webhooks", "investigate"] as Tab[]).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`rounded-lg px-3 py-1.5 font-medium transition ${tab === t ? "bg-surface shadow-sm" : "text-ink-2 hover:text-ink"}`}>
+          <button key={t} onClick={() => setTab(t)} className={`whitespace-nowrap rounded-lg px-3 py-1.5 font-medium transition ${tab === t ? "bg-surface shadow-sm" : "text-ink-2 hover:text-ink"}`}>
             {t === "ledger" ? "Payout ledger" : t === "payto" ? "PayTo payments" : t === "webhooks" ? "Webhooks" : "Investigate"}
           </button>
         ))}
@@ -47,48 +47,50 @@ function Ledger() {
           <Empty>No transactions yet. Disburse a loan and they appear here within a minute.</Empty>
         </div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Ref</th>
-              <th>Side</th>
-              <th>Counterparty</th>
-              <th className="text-right">Amount</th>
-              <th>Channel</th>
-              <th>Status</th>
-              <th>Loan</th>
-              <th className="text-right">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.transactions.map((t) => (
-              <tr key={t.ref}>
-                <td>
-                  <Mono>{t.ref}</Mono>
-                  {t.parent_ref && <div className="text-[11px] text-ink-3">in {t.parent_ref}</div>}
-                </td>
-                <td>
-                  <div>{t.side}</div>
-                  <div className="text-[11px] text-ink-3">{t.category.replace("_", " ")} · {t.type}</div>
-                </td>
-                <td>{t.party_name ?? "—"}</td>
-                <td className={`text-right ${t.type === "credit" ? "text-good" : ""}`}>
-                  {t.type === "credit" ? "+" : "−"}
-                  <Money cents={t.amount} />
-                </td>
-                <td className="text-xs">{t.current_channel === "new_payments_platform" ? "NPP" : t.current_channel === "direct_entry" ? "Direct Entry" : t.current_channel ?? "—"}</td>
-                <td>
-                  <Pill tone={PAYOUT_STATUS[t.status]?.tone ?? "neutral"} pulse={PAYOUT_STATUS[t.status]?.pulse}>
-                    {t.status}
-                  </Pill>
-                  {t.failure && <div className="mt-1 text-xs text-critical">{t.failure.code} {t.failure.title}</div>}
-                </td>
-                <td className="text-xs">{t.metadata?.loan_id ?? "—"}</td>
-                <td className="text-right text-xs text-ink-3">{dateTime(t.created_at)}</td>
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Ref</th>
+                <th>Side</th>
+                <th>Counterparty</th>
+                <th className="text-right">Amount</th>
+                <th>Channel</th>
+                <th>Status</th>
+                <th>Loan</th>
+                <th className="text-right">Created</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.transactions.map((t) => (
+                <tr key={t.ref}>
+                  <td>
+                    <Mono>{t.ref}</Mono>
+                    {t.parent_ref && <div className="text-[11px] text-ink-3">in {t.parent_ref}</div>}
+                  </td>
+                  <td>
+                    <div>{t.side}</div>
+                    <div className="text-[11px] text-ink-3">{t.category.replace("_", " ")} · {t.type}</div>
+                  </td>
+                  <td>{t.party_name ?? "—"}</td>
+                  <td className={`text-right ${t.type === "credit" ? "text-good" : ""}`}>
+                    {t.type === "credit" ? "+" : "−"}
+                    <Money cents={t.amount} />
+                  </td>
+                  <td className="text-xs">{t.current_channel === "new_payments_platform" ? "NPP" : t.current_channel === "direct_entry" ? "Direct Entry" : t.current_channel ?? "—"}</td>
+                  <td>
+                    <Pill tone={PAYOUT_STATUS[t.status]?.tone ?? "neutral"} pulse={PAYOUT_STATUS[t.status]?.pulse}>
+                      {t.status}
+                    </Pill>
+                    {t.failure && <div className="mt-1 text-xs text-critical">{t.failure.code} {t.failure.title}</div>}
+                  </td>
+                  <td className="text-xs">{t.metadata?.loan_id ?? "—"}</td>
+                  <td className="text-right text-xs text-ink-3">{dateTime(t.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </Card>
   );
@@ -108,45 +110,47 @@ function Payto() {
           <Empty>No PayTo payments yet.</Empty>
         </div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Payment uid</th>
-              <th>Agreement</th>
-              <th className="text-right">Amount</th>
-              <th>Statement reference</th>
-              <th>State</th>
-              <th className="text-right">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.payments.map((p) => (
-              <tr key={p.uid}>
-                <td>
-                  <Mono>{p.uid}</Mono>
-                </td>
-                <td>
-                  <Mono>{p.agreement_uid}</Mono>
-                </td>
-                <td className="text-right">
-                  <Money cents={p.amount} />
-                </td>
-                <td className="text-xs">{p.reference}</td>
-                <td>
-                  <Pill tone={INSTALMENT_STATUS[p.state]?.tone ?? "neutral"} pulse={INSTALMENT_STATUS[p.state]?.pulse}>
-                    {p.state}
-                  </Pill>
-                  {p.failure && (
-                    <div className="mt-1 text-xs text-critical">
-                      {p.failure.code} {p.failure.title}
-                    </div>
-                  )}
-                </td>
-                <td className="text-right text-xs text-ink-3">{dateTime(p.created_at)}</td>
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Payment uid</th>
+                <th>Agreement</th>
+                <th className="text-right">Amount</th>
+                <th>Statement reference</th>
+                <th>State</th>
+                <th className="text-right">Created</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.payments.map((p) => (
+                <tr key={p.uid}>
+                  <td>
+                    <Mono>{p.uid}</Mono>
+                  </td>
+                  <td>
+                    <Mono>{p.agreement_uid}</Mono>
+                  </td>
+                  <td className="text-right">
+                    <Money cents={p.amount} />
+                  </td>
+                  <td className="text-xs">{p.reference}</td>
+                  <td>
+                    <Pill tone={INSTALMENT_STATUS[p.state]?.tone ?? "neutral"} pulse={INSTALMENT_STATUS[p.state]?.pulse}>
+                      {p.state}
+                    </Pill>
+                    {p.failure && (
+                      <div className="mt-1 text-xs text-critical">
+                        {p.failure.code} {p.failure.title}
+                      </div>
+                    )}
+                  </td>
+                  <td className="text-right text-xs text-ink-3">{dateTime(p.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </Card>
   );
@@ -178,28 +182,30 @@ function Webhooks() {
       </Card>
       {!!data?.deliveries.length && (
         <Card title="Recent deliveries" padded={false}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>State</th>
-                <th>Response</th>
-                <th>Refs</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.deliveries.map((d) => (
-                <tr key={d.id}>
-                  <td>
-                    <Mono>{d.event_type}</Mono>
-                  </td>
-                  <td>{d.state}</td>
-                  <td>{d.response_status_code ?? "—"}</td>
-                  <td className="text-xs">{d.payload_data_summary?.map((p) => p.ref).join(", ")}</td>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>State</th>
+                  <th>Response</th>
+                  <th>Refs</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.deliveries.map((d) => (
+                  <tr key={d.id}>
+                    <td>
+                      <Mono>{d.event_type}</Mono>
+                    </td>
+                    <td>{d.state}</td>
+                    <td>{d.response_status_code ?? "—"}</td>
+                    <td className="text-xs">{d.payload_data_summary?.map((p) => p.ref).join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>

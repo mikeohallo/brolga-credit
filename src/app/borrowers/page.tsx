@@ -90,103 +90,105 @@ export default function Borrowers() {
             <Spinner /> Loading
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Borrower</th>
-                <th>Bank account</th>
-                <th>Zepto contact</th>
-                <th>Confirmation of Payee</th>
-                <th>Loans</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data?.borrowers.map((b) => {
-                const cop = b.cop;
-                const ls = loansFor(b.id);
-                return (
-                  <tr key={b.id}>
-                    <td>
-                      <div className="font-semibold">{b.name}</div>
-                      <div className="text-xs text-ink-3">
-                        {b.id} · {b.email}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="mono text-[13px]">
-                        {b.bsb} · {b.accountNumber}
-                      </div>
-                      <div className="text-xs text-ink-3">{b.bankName ?? "bank resolved on registration"}</div>
-                    </td>
-                    <td>
-                      {b.zeptoContactId ? (
-                        <div>
-                          <Mono>{b.zeptoContactRef}</Mono>
-                          <div className="mt-0.5 truncate text-[11px] text-ink-3" title={b.zeptoContactId}>
-                            {b.zeptoContactId.slice(0, 8)}…
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Borrower</th>
+                  <th>Bank account</th>
+                  <th>Zepto contact</th>
+                  <th>Confirmation of Payee</th>
+                  <th>Loans</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.borrowers.map((b) => {
+                  const cop = b.cop;
+                  const ls = loansFor(b.id);
+                  return (
+                    <tr key={b.id}>
+                      <td>
+                        <div className="font-semibold">{b.name}</div>
+                        <div className="text-xs text-ink-3">
+                          {b.id} · {b.email}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="mono text-[13px]">
+                          {b.bsb} · {b.accountNumber}
+                        </div>
+                        <div className="text-xs text-ink-3">{b.bankName ?? "bank resolved on registration"}</div>
+                      </td>
+                      <td>
+                        {b.zeptoContactId ? (
+                          <div>
+                            <Mono>{b.zeptoContactRef}</Mono>
+                            <div className="mt-0.5 truncate text-[11px] text-ink-3" title={b.zeptoContactId}>
+                              {b.zeptoContactId.slice(0, 8)}…
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-ink-3">not yet registered</span>
-                      )}
-                    </td>
-                    <td>
-                      {cop ? (
-                        <div>
-                          <Pill tone={COP_TONE[cop.result]}>{COP_LABEL[cop.result]}</Pill>
-                          <div className="mt-1 text-xs text-ink-3">
-                            {cop.result === "error" ? cop.error : (
-                              <>
-                                {cop.riskScore !== undefined && <>risk {cop.riskScore} · </>}
-                                {cop.suggestedChannels?.length ? `${cop.suggestedChannels.join(", ")} · ` : ""}
-                                {timeAgo(cop.checkedAt)}
-                                {cop.simulated && <> · simulated {cop.simulated}</>}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-ink-3">not checked</span>
-                      )}
-                    </td>
-                    <td>
-                      {ls.length === 0 ? (
-                        <span className="text-xs text-ink-3">none</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {ls.map((l) => (
-                            <Link key={l.id} href={`/loans/${l.id}`} className="text-xs font-semibold text-brand hover:underline">
-                              {l.id}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <select className="select !w-auto !py-1 !text-xs" value={sim[b.id] ?? "match"} onChange={(e) => setSim({ ...sim, [b.id]: e.target.value })} title="Sandbox outcome to simulate">
-                          <option value="match">simulate: match</option>
-                          <option value="close_match">simulate: close match</option>
-                          <option value="individual_no_match">simulate: no match</option>
-                          <option value="account_closed">simulate: account closed</option>
-                          <option value="no_account_found">simulate: no account</option>
-                        </select>
-                        <button className="btn btn-secondary btn-sm" onClick={() => verify(b)} disabled={!!act.busy}>
-                          {act.busy === `verify-${b.id}` && <Spinner />} Verify
-                        </button>
-                        {!b.zeptoContactId && (
-                          <button className="btn btn-ghost btn-sm" onClick={() => register(b)} disabled={!!act.busy}>
-                            {act.busy === `register-${b.id}` && <Spinner />} Register
-                          </button>
+                        ) : (
+                          <span className="text-xs text-ink-3">not yet registered</span>
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td>
+                        {cop ? (
+                          <div>
+                            <Pill tone={COP_TONE[cop.result]}>{COP_LABEL[cop.result]}</Pill>
+                            <div className="mt-1 text-xs text-ink-3">
+                              {cop.result === "error" ? cop.error : (
+                                <>
+                                  {cop.riskScore !== undefined && <>risk {cop.riskScore} · </>}
+                                  {cop.suggestedChannels?.length ? `${cop.suggestedChannels.join(", ")} · ` : ""}
+                                  {timeAgo(cop.checkedAt)}
+                                  {cop.simulated && <> · simulated {cop.simulated}</>}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-ink-3">not checked</span>
+                        )}
+                      </td>
+                      <td>
+                        {ls.length === 0 ? (
+                          <span className="text-xs text-ink-3">none</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {ls.map((l) => (
+                              <Link key={l.id} href={`/loans/${l.id}`} className="text-xs font-semibold text-brand hover:underline">
+                                {l.id}
+                              </Link>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <select className="select !w-auto !py-1 !text-xs" value={sim[b.id] ?? "match"} onChange={(e) => setSim({ ...sim, [b.id]: e.target.value })} title="Sandbox outcome to simulate">
+                            <option value="match">simulate: match</option>
+                            <option value="close_match">simulate: close match</option>
+                            <option value="individual_no_match">simulate: no match</option>
+                            <option value="account_closed">simulate: account closed</option>
+                            <option value="no_account_found">simulate: no account</option>
+                          </select>
+                          <button className="btn btn-secondary btn-sm" onClick={() => verify(b)} disabled={!!act.busy}>
+                            {act.busy === `verify-${b.id}` && <Spinner />} Verify
+                          </button>
+                          {!b.zeptoContactId && (
+                            <button className="btn btn-ghost btn-sm" onClick={() => register(b)} disabled={!!act.busy}>
+                              {act.busy === `register-${b.id}` && <Spinner />} Register
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </>

@@ -44,53 +44,55 @@ export default function Loans() {
             </Empty>
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Loan</th>
-                <th>Borrower</th>
-                <th className="text-right">Principal</th>
-                <th className="text-right">Instalment</th>
-                <th>Disbursement</th>
-                <th>PayTo</th>
-                <th className="text-right">Collected</th>
-                <th>Status</th>
-                <th className="text-right">Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((l) => {
-                const settled = l.instalments.filter((i) => i.state === "settled").length;
-                return (
-                  <tr key={l.id} className="cursor-pointer" onClick={() => router.push(`/loans/${l.id}`)}>
-                    <td>
-                      <Link href={`/loans/${l.id}`} className="font-semibold text-brand hover:underline">
-                        {l.id}
-                      </Link>
-                      <div className="text-xs text-ink-3">{l.purpose}</div>
-                    </td>
-                    <td>{l.borrower?.name}</td>
-                    <td className="text-right">
-                      <Money cents={l.principalCents} />
-                    </td>
-                    <td className="text-right">
-                      <Money cents={l.instalmentCents} />
-                      <div className="text-xs text-ink-3">× {l.termFortnights}</div>
-                    </td>
-                    <td>{l.disbursement ? (() => { const st = ["returned", "rejected", "voided"].includes(l.disbursement.creditStatus ?? "") ? l.disbursement.creditStatus! : l.disbursement.status === "cleared" ? (l.disbursement.creditStatus ?? "clearing") : l.disbursement.status; const done = st === "cleared"; const bad = ["returned", "rejected", "voided"].includes(st); return <Pill tone={done ? "good" : bad ? "critical" : "info"} pulse={!done && !bad}>{st}</Pill>; })() : <span className="text-xs text-ink-3">—</span>}</td>
-                    <td>{l.mandate ? <Pill tone={AGREEMENT_STATUS[l.mandate.state]?.tone ?? "neutral"} pulse={AGREEMENT_STATUS[l.mandate.state]?.pulse}>{l.mandate.state}</Pill> : <span className="text-xs text-ink-3">—</span>}</td>
-                    <td className="text-right tnum">
-                      {settled}/{l.termFortnights}
-                    </td>
-                    <td>
-                      <LoanStatusPill status={l.status} />
-                    </td>
-                    <td className="text-right text-ink-3">{timeAgo(l.updatedAt)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Loan</th>
+                  <th>Borrower</th>
+                  <th className="text-right">Principal</th>
+                  <th className="text-right">Instalment</th>
+                  <th>Disbursement</th>
+                  <th>PayTo</th>
+                  <th className="text-right">Collected</th>
+                  <th>Status</th>
+                  <th className="text-right">Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((l) => {
+                  const settled = l.instalments.filter((i) => i.state === "settled").length;
+                  return (
+                    <tr key={l.id} className="cursor-pointer" onClick={() => router.push(`/loans/${l.id}`)}>
+                      <td>
+                        <Link href={`/loans/${l.id}`} className="font-semibold text-brand hover:underline">
+                          {l.id}
+                        </Link>
+                        <div className="text-xs text-ink-3">{l.purpose}</div>
+                      </td>
+                      <td>{l.borrower?.name}</td>
+                      <td className="text-right">
+                        <Money cents={l.principalCents} />
+                      </td>
+                      <td className="text-right">
+                        <Money cents={l.instalmentCents} />
+                        <div className="text-xs text-ink-3">× {l.termFortnights}</div>
+                      </td>
+                      <td>{l.disbursement ? (() => { const st = ["returned", "rejected", "voided"].includes(l.disbursement.creditStatus ?? "") ? l.disbursement.creditStatus! : l.disbursement.status === "cleared" ? (l.disbursement.creditStatus ?? "clearing") : l.disbursement.status; const done = st === "cleared"; const bad = ["returned", "rejected", "voided"].includes(st); return <Pill tone={done ? "good" : bad ? "critical" : "info"} pulse={!done && !bad}>{st}</Pill>; })() : <span className="text-xs text-ink-3">—</span>}</td>
+                      <td>{l.mandate ? <Pill tone={AGREEMENT_STATUS[l.mandate.state]?.tone ?? "neutral"} pulse={AGREEMENT_STATUS[l.mandate.state]?.pulse}>{l.mandate.state}</Pill> : <span className="text-xs text-ink-3">—</span>}</td>
+                      <td className="text-right tnum">
+                        {settled}/{l.termFortnights}
+                      </td>
+                      <td>
+                        <LoanStatusPill status={l.status} />
+                      </td>
+                      <td className="text-right text-ink-3">{timeAgo(l.updatedAt)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </>

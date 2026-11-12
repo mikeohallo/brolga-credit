@@ -117,8 +117,8 @@ export function Card({ title, subtitle, children, actions, className = "", padde
   return (
     <section className={`card ${className}`}>
       {(title || actions) && (
-        <header className="flex items-start justify-between gap-3 border-b border-line px-5 py-3.5">
-          <div>
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-3.5">
+          <div className="min-w-0 flex-1 basis-56">
             {title && <h2 className="text-sm font-semibold">{title}</h2>}
             {subtitle && <p className="mt-0.5 text-xs text-ink-3">{subtitle}</p>}
           </div>

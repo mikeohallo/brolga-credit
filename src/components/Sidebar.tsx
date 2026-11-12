@@ -18,7 +18,7 @@ const NAV = [
   { href: "/loans", label: "Loans", icon: "▤" },
   { href: "/borrowers", label: "Borrowers", icon: "◯" },
   { href: "/operations", label: "Operations", icon: "≡" },
-  { href: "/console", label: "API console", icon: ">_" },
+  { href: "/console", label: "API console", short: "Console", icon: ">_" },
 ];
 
 export function Sidebar() {
@@ -28,20 +28,24 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Narrow screens: navigation and the environment badge stay reachable. */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 overflow-x-auto border-b border-line bg-surface px-3 py-2 md:hidden">
-        <Link href="/" className="mr-1 flex shrink-0 items-center gap-2 text-sm font-semibold">
-          <BrolgaMark /> Brolga
-        </Link>
-        {NAV.map((n) => {
-          const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
-          return (
-            <Link key={n.href} href={n.href} className="navlink !px-2 !py-1 text-xs" data-active={active}>
-              {n.label}
-            </Link>
-          );
-        })}
-        <span className="ml-auto shrink-0">{health ? <Pill tone={health.mode === "sandbox" ? "brand" : "warn"}>{health.mode === "sandbox" ? "Sandbox" : "Mock"}</Pill> : <Pill tone="neutral" pulse>connecting</Pill>}</span>
+      {/* Narrow screens: every page stays one tap away (two rows, nothing scrolls out of sight). */}
+      <div className="sticky top-0 z-10 border-b border-line bg-surface px-3 pb-2 pt-2 md:hidden">
+        <div className="flex items-center justify-between">
+          <Link href="/" className="flex shrink-0 items-center gap-2 text-sm font-semibold">
+            <BrolgaMark size={26} /> Brolga
+          </Link>
+          {health ? <Pill tone={health.mode === "sandbox" ? "brand" : "warn"}>{health.mode === "sandbox" ? "Sandbox" : "Mock"}</Pill> : <Pill tone="neutral" pulse>connecting</Pill>}
+        </div>
+        <nav className="mt-2 grid grid-cols-5 gap-1">
+          {NAV.map((n) => {
+            const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
+            return (
+              <Link key={n.href} href={n.href} className="navlink justify-center !px-1 !py-1.5 text-center !text-xs" data-active={active}>
+                {n.short ?? n.label}
+              </Link>
+            );
+          })}
+        </nav>
       </div>
     <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-surface px-4 py-5 md:flex">
       <Link href="/" className="mb-6 flex items-center gap-2.5 px-2">
@@ -99,10 +103,10 @@ export function Sidebar() {
   );
 }
 
-function BrolgaMark() {
+function BrolgaMark({ size = 34 }: { size?: number }) {
   // An abstract crane silhouette — original artwork for a fictional lender.
   return (
-    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 34 34" aria-hidden>
       <rect width="34" height="34" rx="9" fill="#0f5c50" />
       <path d="M9 24c3.5 0 6-2.2 7-5.5.6-2 1.6-3.5 3.4-4.4l1.6-.8" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" fill="none" />
       <path d="M20.5 13.2c1.5-1 3-.9 4.2.2l1.3 1.3-3.2.5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />

@@ -40,72 +40,74 @@ export default function Console() {
             <Empty>No API calls logged yet.</Empty>
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Request</th>
-                <th>Why</th>
-                <th>Status</th>
-                <th className="text-right">Latency</th>
-                <th>Request id</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e) => (
-                <>
-                  <tr key={e.id} className="cursor-pointer" onClick={() => setOpen(open === e.id ? null : e.id)}>
-                    <td className="mono text-xs text-ink-3">{clock(e.at)}</td>
-                    <td>
-                      <span className={`mono mr-2 text-[11px] font-bold ${e.method === "GET" ? "text-ink-3" : "text-brand"}`}>{e.method}</span>
-                      <span className="mono text-[13px]">{e.path}</span>
-                    </td>
-                    <td className="text-xs text-ink-2">{e.context ?? "—"}</td>
-                    <td>
-                      <Pill tone={e.ok ? (e.status === 201 || e.status === 202 ? "brand" : "good") : e.status === 403 ? "warn" : "critical"}>{e.status || "ERR"}</Pill>
-                    </td>
-                    <td className="mono text-right text-xs text-ink-3">{e.ms} ms</td>
-                    <td className="mono text-[11px] text-ink-3">{e.requestId ? e.requestId.slice(0, 8) : e.mode === "mock" ? "mock" : "—"}</td>
-                  </tr>
-                  {open === e.id && (
-                    <tr key={`${e.id}-detail`}>
-                      <td colSpan={6} className="!bg-surface-2">
-                        <div className="grid gap-3 text-xs md:grid-cols-2">
-                          <div>
-                            <div className="label mb-1">Headers</div>
-                            <div className="space-y-0.5">
-                              <div>
-                                <Mono>Authorization: Bearer ••••••••</Mono>
-                              </div>
-                              <div>
-                                <Mono>Zepto-Api-Version: {e.apiVersion}</Mono>
-                              </div>
-                              {e.idempotencyKey && (
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Request</th>
+                  <th>Why</th>
+                  <th>Status</th>
+                  <th className="text-right">Latency</th>
+                  <th>Request id</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e) => (
+                  <>
+                    <tr key={e.id} className="cursor-pointer" onClick={() => setOpen(open === e.id ? null : e.id)}>
+                      <td className="mono text-xs text-ink-3">{clock(e.at)}</td>
+                      <td>
+                        <span className={`mono mr-2 text-[11px] font-bold ${e.method === "GET" ? "text-ink-3" : "text-brand"}`}>{e.method}</span>
+                        <span className="mono text-[13px]">{e.path}</span>
+                      </td>
+                      <td className="text-xs text-ink-2">{e.context ?? "—"}</td>
+                      <td>
+                        <Pill tone={e.ok ? (e.status === 201 || e.status === 202 ? "brand" : "good") : e.status === 403 ? "warn" : "critical"}>{e.status || "ERR"}</Pill>
+                      </td>
+                      <td className="mono text-right text-xs text-ink-3">{e.ms} ms</td>
+                      <td className="mono text-[11px] text-ink-3">{e.requestId ? e.requestId.slice(0, 8) : e.mode === "mock" ? "mock" : "—"}</td>
+                    </tr>
+                    {open === e.id && (
+                      <tr key={`${e.id}-detail`}>
+                        <td colSpan={6} className="!bg-surface-2">
+                          <div className="grid gap-3 text-xs md:grid-cols-2">
+                            <div>
+                              <div className="label mb-1">Headers</div>
+                              <div className="space-y-0.5">
                                 <div>
-                                  <Mono>Idempotency-Key: {e.idempotencyKey}</Mono>
+                                  <Mono>Authorization: Bearer ••••••••</Mono>
                                 </div>
+                                <div>
+                                  <Mono>Zepto-Api-Version: {e.apiVersion}</Mono>
+                                </div>
+                                {e.idempotencyKey && (
+                                  <div>
+                                    <Mono>Idempotency-Key: {e.idempotencyKey}</Mono>
+                                  </div>
+                                )}
+                              </div>
+                              {e.requestBody !== undefined && e.requestBody !== null && (
+                                <>
+                                  <div className="label mb-1 mt-3">Request body</div>
+                                  <pre className="mono max-h-72 overflow-auto rounded-lg bg-ink p-3 text-[11px] leading-relaxed text-paper">{JSON.stringify(e.requestBody, null, 2)}</pre>
+                                </>
                               )}
                             </div>
-                            {e.requestBody !== undefined && e.requestBody !== null && (
-                              <>
-                                <div className="label mb-1 mt-3">Request body</div>
-                                <pre className="mono max-h-72 overflow-auto rounded-lg bg-ink p-3 text-[11px] leading-relaxed text-paper">{JSON.stringify(e.requestBody, null, 2)}</pre>
-                              </>
-                            )}
+                            <div>
+                              <div className="label mb-1">Response</div>
+                              {e.error && <div className="mb-2 rounded-lg bg-critical-soft px-2 py-1 text-critical">{e.error}</div>}
+                              {e.responseSnippet ? <pre className="mono max-h-72 overflow-auto rounded-lg bg-ink p-3 text-[11px] leading-relaxed text-paper">{pretty(e.responseSnippet)}</pre> : <div className="text-ink-3">{e.mode === "mock" ? "mock response" : "no body"}</div>}
+                            </div>
                           </div>
-                          <div>
-                            <div className="label mb-1">Response</div>
-                            {e.error && <div className="mb-2 rounded-lg bg-critical-soft px-2 py-1 text-critical">{e.error}</div>}
-                            {e.responseSnippet ? <pre className="mono max-h-72 overflow-auto rounded-lg bg-ink p-3 text-[11px] leading-relaxed text-paper">{pretty(e.responseSnippet)}</pre> : <div className="text-ink-3">{e.mode === "mock" ? "mock response" : "no body"}</div>}
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              ))}
-            </tbody>
-          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </>

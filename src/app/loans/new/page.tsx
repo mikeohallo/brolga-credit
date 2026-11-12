@@ -61,7 +61,7 @@ export default function NewLoan() {
 
       <ErrorBanner error={act.error} onDismiss={act.clearError} />
 
-      <div className="mb-5 flex items-center gap-2 text-sm">
+      <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         {["Borrower", "Terms", "Verify account"].map((s, i) => (
           <div key={s} className="flex items-center gap-2">
             <button onClick={() => i + 1 < step && setStep(i + 1)} className={`flex items-center gap-2 rounded-full px-3 py-1 ${step === i + 1 ? "bg-brand text-white" : step > i + 1 ? "bg-brand-soft text-brand-ink" : "bg-neutral-soft text-ink-3"}`}>

@@ -84,66 +84,107 @@ function CaseList({ list, onOpen }: { list: ReturnType<typeof useResource<ListRe
             </div>
           )
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Case</th>
-                <th>Type</th>
-                <th>What&rsquo;s wrong</th>
-                <th className="text-right">Briefings</th>
-                <th>Last briefing</th>
-                <th>Marks</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.cases.map((c) => (
-                <tr key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
-                  <td>
+          <>
+          {/* Phones: one card a case, instead of a six-column table squeezed to the screen. */}
+          <ul className="divide-y divide-line md:hidden">
+            {data.cases.map((c) => (
+              <li key={c.id}>
+                <button type="button" onClick={() => onOpen(c.id)} className="block w-full px-4 py-3 text-left active:bg-surface-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Mono>{c.id}</Mono>
-                    {c.heldBack && (
-                      <Pill tone="warn" className="ml-2">
-                        held back
-                      </Pill>
+                    {c.heldBack && <Pill tone="warn">held back</Pill>}
+                    <span className="ml-auto text-xs text-ink-3">
+                      <span className="mono">{c.typeCode}</span> {c.typeTitle}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 text-sm">{c.title}</div>
+                  <div className="mt-1 text-[11px] text-ink-3">
+                    loan {c.loanId} · {c.records} records{c.evidence ? ` + ${c.evidence} evidence` : ""}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="text-ink-3">
+                      {c.briefings} briefing{c.briefings === 1 ? "" : "s"}
+                    </span>
+                    {c.lastRun && <Pill tone={c.lastRun.accepted ? "good" : "critical"}>{c.lastRun.accepted ? "accepted" : "rejected"}</Pill>}
+                    {c.lastRun?.diagnosis && (
+                      <span className="text-[11px] text-ink-3">
+                        {c.lastRun.diagnosis} / {c.lastRun.nextStep}
+                      </span>
                     )}
-                  </td>
-                  <td className="text-xs">
-                    <span className="mono">{c.typeCode}</span> {c.typeTitle}
-                  </td>
-                  <td>
-                    <div>{c.title}</div>
-                    <div className="text-[11px] text-ink-3">
-                      loan {c.loanId} · {c.records} records{c.evidence ? ` + ${c.evidence} evidence` : ""}
-                    </div>
-                  </td>
-                  <td className="text-right tnum">{c.briefings}</td>
-                  <td className="text-xs">
-                    {c.lastRun ? (
-                      <>
-                        <Pill tone={c.lastRun.accepted ? "good" : "critical"}>{c.lastRun.accepted ? "accepted" : "rejected"}</Pill>
-                        {c.lastRun.diagnosis && (
-                          <div className="mt-1 text-[11px] text-ink-3">
-                            {c.lastRun.diagnosis} / {c.lastRun.nextStep}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-ink-3">—</span>
-                    )}
-                  </td>
-                  <td className="text-xs">
-                    {c.lastMark ? (
+                    {c.lastMark && (
                       <Pill tone={VERDICT[c.lastMark].tone}>
                         {VERDICT[c.lastMark].label}
                         {c.marks > 1 ? ` · ${c.marks}` : ""}
                       </Pill>
-                    ) : (
-                      <span className="text-ink-3">—</span>
                     )}
-                  </td>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="table-scroll hidden md:block">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Case</th>
+                  <th>Type</th>
+                  <th>What&rsquo;s wrong</th>
+                  <th className="text-right">Briefings</th>
+                  <th>Last briefing</th>
+                  <th>Marks</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.cases.map((c) => (
+                  <tr key={c.id} className="cursor-pointer" onClick={() => onOpen(c.id)}>
+                    <td>
+                      <Mono>{c.id}</Mono>
+                      {c.heldBack && (
+                        <Pill tone="warn" className="ml-2">
+                          held back
+                        </Pill>
+                      )}
+                    </td>
+                    <td className="text-xs">
+                      <span className="mono">{c.typeCode}</span> {c.typeTitle}
+                    </td>
+                    <td>
+                      <div>{c.title}</div>
+                      <div className="text-[11px] text-ink-3">
+                        loan {c.loanId} · {c.records} records{c.evidence ? ` + ${c.evidence} evidence` : ""}
+                      </div>
+                    </td>
+                    <td className="text-right tnum">{c.briefings}</td>
+                    <td className="text-xs">
+                      {c.lastRun ? (
+                        <>
+                          <Pill tone={c.lastRun.accepted ? "good" : "critical"}>{c.lastRun.accepted ? "accepted" : "rejected"}</Pill>
+                          {c.lastRun.diagnosis && (
+                            <div className="mt-1 text-[11px] text-ink-3">
+                              {c.lastRun.diagnosis} / {c.lastRun.nextStep}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-ink-3">—</span>
+                      )}
+                    </td>
+                    <td className="text-xs">
+                      {c.lastMark ? (
+                        <Pill tone={VERDICT[c.lastMark].tone}>
+                          {VERDICT[c.lastMark].label}
+                          {c.marks > 1 ? ` · ${c.marks}` : ""}
+                        </Pill>
+                      ) : (
+                        <span className="text-ink-3">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </>
         )}
       </Card>
     </div>

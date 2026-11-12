@@ -317,82 +317,84 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
                 <Spinner /> {elig.reason}
               </div>
             )}
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Due</th>
-                  <th className="text-right">Amount</th>
-                  <th>Status</th>
-                  <th>PayTo payment</th>
-                  <th className="text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loan.instalments.map((i) => {
-                  const st = INSTALMENT_STATUS[i.state];
-                  const isNext = elig.instalment?.n === i.n;
-                  const collectable = isNext && elig.ok && (i.state === "scheduled" || i.state === "unknown");
-                  return (
-                    <tr key={i.n} className={isNext ? "bg-brand-soft/30" : ""}>
-                      <td className="tnum">{i.n}</td>
-                      <td>{shortDate(i.dueDate)}</td>
-                      <td className="text-right">
-                        <Money cents={i.amountCents} />
-                      </td>
-                      <td>
-                        <Pill tone={st.tone} pulse={st.pulse}>
-                          {st.label}
-                        </Pill>
-                        {i.failure && (
-                          <div className="mt-1 text-xs text-critical">
-                            {i.failure.code} {i.failure.title}
-                            {i.failure.retryable ? " · retryable" : " · not retryable"}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        {i.paymentUid ? (
-                          <div>
-                            <Mono>{i.paymentUid}</Mono>
-                            {i.attempts > 1 && <div className="text-xs text-ink-3">{i.attempts} attempts</div>}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-ink-3">—</span>
-                        )}
-                      </td>
-                      <td className="text-right">
-                        {collectable && (
-                          <div className="flex items-center justify-end gap-1.5">
-                            <select className="select !w-auto !py-1 !text-xs" value={paymentSim} onChange={(e) => setPaymentSim(e.target.value)} title="Sandbox outcome">
-                              <option value="auto_settle">settles</option>
-                              <option value="insufficient_funds">insufficient funds</option>
-                              <option value="investigate_and_settle">bank investigates, then settles</option>
-                              <option value="debtor_account_closed">account closed</option>
-                            </select>
-                            <button className="btn btn-primary btn-sm" onClick={() => post(`collect-${i.n}`, "collect", { n: i.n, simulate: paymentSim, delay: 3 })} disabled={!!act.busy}>
-                              {act.busy === `collect-${i.n}` ? <Spinner /> : null} {i.state === "unknown" ? "Check and collect" : "Collect now"}
-                            </button>
-                          </div>
-                        )}
-                        {i.state === "failed" && i.failure?.retryable && isNext && elig.ok && (
-                          <div className="flex items-center justify-end gap-1.5">
-                            <select className="select !w-auto !py-1 !text-xs" value={retrySim} onChange={(e) => setRetrySim(e.target.value)}>
-                              <option value="auto_settle">settles</option>
-                              <option value="insufficient_funds">insufficient funds again</option>
-                            </select>
-                            <button className="btn btn-secondary btn-sm" onClick={() => post(`retry-${i.n}`, "retry", { n: i.n, simulate: retrySim, delay: 3 })} disabled={!!act.busy}>
-                              {act.busy === `retry-${i.n}` ? <Spinner /> : null} Retry
-                            </button>
-                          </div>
-                        )}
-                        {isNext && !elig.ok && !elig.waiting && (i.state === "scheduled" || i.state === "failed") && <span className="text-xs text-ink-3">{elig.reason}</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Due</th>
+                    <th className="text-right">Amount</th>
+                    <th>Status</th>
+                    <th>PayTo payment</th>
+                    <th className="text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loan.instalments.map((i) => {
+                    const st = INSTALMENT_STATUS[i.state];
+                    const isNext = elig.instalment?.n === i.n;
+                    const collectable = isNext && elig.ok && (i.state === "scheduled" || i.state === "unknown");
+                    return (
+                      <tr key={i.n} className={isNext ? "bg-brand-soft/30" : ""}>
+                        <td className="tnum">{i.n}</td>
+                        <td className="whitespace-nowrap">{shortDate(i.dueDate)}</td>
+                        <td className="text-right">
+                          <Money cents={i.amountCents} />
+                        </td>
+                        <td>
+                          <Pill tone={st.tone} pulse={st.pulse}>
+                            {st.label}
+                          </Pill>
+                          {i.failure && (
+                            <div className="mt-1 text-xs text-critical">
+                              {i.failure.code} {i.failure.title}
+                              {i.failure.retryable ? " · retryable" : " · not retryable"}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {i.paymentUid ? (
+                            <div>
+                              <Mono>{i.paymentUid}</Mono>
+                              {i.attempts > 1 && <div className="text-xs text-ink-3">{i.attempts} attempts</div>}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-ink-3">—</span>
+                          )}
+                        </td>
+                        <td className="text-right">
+                          {collectable && (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <select className="select !w-auto !py-1 !text-xs" value={paymentSim} onChange={(e) => setPaymentSim(e.target.value)} title="Sandbox outcome">
+                                <option value="auto_settle">settles</option>
+                                <option value="insufficient_funds">insufficient funds</option>
+                                <option value="investigate_and_settle">bank investigates, then settles</option>
+                                <option value="debtor_account_closed">account closed</option>
+                              </select>
+                              <button className="btn btn-primary btn-sm" onClick={() => post(`collect-${i.n}`, "collect", { n: i.n, simulate: paymentSim, delay: 3 })} disabled={!!act.busy}>
+                                {act.busy === `collect-${i.n}` ? <Spinner /> : null} {i.state === "unknown" ? "Check and collect" : "Collect now"}
+                              </button>
+                            </div>
+                          )}
+                          {i.state === "failed" && i.failure?.retryable && isNext && elig.ok && (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <select className="select !w-auto !py-1 !text-xs" value={retrySim} onChange={(e) => setRetrySim(e.target.value)}>
+                                <option value="auto_settle">settles</option>
+                                <option value="insufficient_funds">insufficient funds again</option>
+                              </select>
+                              <button className="btn btn-secondary btn-sm" onClick={() => post(`retry-${i.n}`, "retry", { n: i.n, simulate: retrySim, delay: 3 })} disabled={!!act.busy}>
+                                {act.busy === `retry-${i.n}` ? <Spinner /> : null} Retry
+                              </button>
+                            </div>
+                          )}
+                          {isNext && !elig.ok && !elig.waiting && (i.state === "scheduled" || i.state === "failed") && <span className="text-xs text-ink-3">{elig.reason}</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
             {!!loan.adjustments?.length && (
               <div className="border-t border-line px-5 py-3 text-xs text-ink-2">
                 <span className="label mr-2">Adjustments</span>
@@ -416,7 +418,7 @@ export default function LoanDetail({ params }: { params: Promise<{ id: string }>
                   <div className="min-w-0 flex-1">
                     <div className="break-words">{e.message}</div>
                     <div className="mt-0.5 text-xs text-ink-3">
-                      <span className="mono">{e.type}</span>
+                      <span className="mono break-all">{e.type}</span>
                       {e.ref && (
                         <>
                           {" "}

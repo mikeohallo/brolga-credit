@@ -97,39 +97,41 @@ export default function Overview() {
                 </Empty>
               </div>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Loan</th>
-                    <th>Borrower</th>
-                    <th className="text-right">Principal</th>
-                    <th>Status</th>
-                    <th className="text-right">Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...all]
-                    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-                    .slice(0, 8)
-                    .map((l) => (
-                      <tr key={l.id} className="cursor-pointer" onClick={() => router.push(`/loans/${l.id}`)}>
-                        <td>
-                          <Link href={`/loans/${l.id}`} className="font-semibold text-brand hover:underline">
-                            {l.id}
-                          </Link>
-                        </td>
-                        <td>{l.borrower?.name ?? l.borrowerId}</td>
-                        <td className="text-right">
-                          <Money cents={l.principalCents} />
-                        </td>
-                        <td>
-                          <LoanStatusPill status={l.status} />
-                        </td>
-                        <td className="text-right text-ink-3">{timeAgo(l.updatedAt)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+              <div className="table-scroll">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Loan</th>
+                      <th>Borrower</th>
+                      <th className="text-right">Principal</th>
+                      <th>Status</th>
+                      <th className="text-right">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...all]
+                      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+                      .slice(0, 8)
+                      .map((l) => (
+                        <tr key={l.id} className="cursor-pointer" onClick={() => router.push(`/loans/${l.id}`)}>
+                          <td>
+                            <Link href={`/loans/${l.id}`} className="font-semibold text-brand hover:underline">
+                              {l.id}
+                            </Link>
+                          </td>
+                          <td>{l.borrower?.name ?? l.borrowerId}</td>
+                          <td className="text-right">
+                            <Money cents={l.principalCents} />
+                          </td>
+                          <td>
+                            <LoanStatusPill status={l.status} />
+                          </td>
+                          <td className="text-right text-ink-3">{timeAgo(l.updatedAt)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
 

@@ -222,3 +222,24 @@ body {
 ::selection {
   background: rgba(15, 92, 80, 0.2);
 }
+
+/* Tables keep their natural width and scroll inside their own box, so a narrow
+   screen never scrolls the whole page sideways. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+/* A grid item defaults to min-width: auto, which lets a wide table or long line
+   push the whole column past the screen. Letting items shrink keeps wide content
+   inside its own box. */
+.grid > * {
+  min-width: 0;
+}
+
+/* Wide enough that rows stay one or two lines, so a table scrolls sideways
+   instead of being squeezed into tall, narrow rows on a phone. */
+.table-scroll > .table {
+  min-width: 36rem;
+}
