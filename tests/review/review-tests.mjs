@@ -11,7 +11,8 @@
 // operator-marks line and T65 for carrying state across a regeneration (6 Nov 2026), and
 // T66–T68 after the fourth review (6 Nov 2026: the published hashes pinned; a mark saved
 // during a briefing survives; the tab writes nothing on held-back cases and the label
-// leaves the server only after a mark). Runs
+// leaves the server only after a mark), and T69–T73 for the hosted build (the stored state
+// in a Worker, its lock and chunks, the Access check, overlapping requests). Runs
 // the real TypeScript modules with Node's type stripping (Node 22.15+), a fake
 // clock and the in-memory mock; no server, browser or network.
 //
@@ -114,7 +115,7 @@ async function test(id, name, expectation, fn) {
     await fn();
     results.push({ id, name, expectation, result: 'PASS', observations: facts });
   } catch (error) {
-    results.push({ id, name, expectation, result: 'FAIL', observations: facts, failure: error.message, assertion: error.code === 'ERR_ASSERTION' });
+    results.push({ id, name, expectation, result: 'FAIL', observations: facts, failure: error.message, stack: process.env.T_STACK ? error.stack : undefined, assertion: error.code === 'ERR_ASSERTION' });
   }
   console.log(`${results.at(-1).result} ${id} ${name}`);
 }
@@ -1195,6 +1196,150 @@ try {
     const changedEvidence = freshFrom(); changedEvidence.cases[0].preparedEvidence[0].text += ' (a different answer)';
     assert.throws(() => inv.store.carryState(changedEvidence, earlier), /prepared evidence differs/);
     note({ heldBackEvidenceStatus: held.status, labelBeforeMark: unmarked.expected, labelAfterMark: marked.expected?.diagnosis, prototypeNamesRejected: true, carryRefusals: ['reworded question', 'changed prepared evidence'] });
+  });
+  // T69–T73: the hosted build (stage B, 12 Nov 2026): the stored state in a Worker, the lock, the Access check.
+  const hostedSrc = (name) => source(`src/hosted/${name}.ts`);
+  await test('T69', 'A hosted request sees the stored files as a copy, and only what it changed is saved', 'The in-memory files read what the snapshot held, a write or a seed is a change, a removed file is a deletion, an unchanged file is not saved, and reading a file that was never stored fails rather than inventing one.', async () => {
+    const { MemoryFiles } = await hostedSrc('scope');
+    const m = new MemoryFiles({ 'a.json': '1', 'b.json': '2' });
+    assert.deepEqual(m.changes(), {});
+    m.writeAtomic('a.json', '10');
+    m.seed('b.json', 'seed'); // already stored: the seed must not replace it
+    m.seed('c.json', 'seeded');
+    m.copy('a.json', 'a.copy.json');
+    m.remove('b.json');
+    m.remove('never.json');
+    assert.deepEqual(m.changes(), { 'a.json': '10', 'c.json': 'seeded', 'a.copy.json': '10', 'b.json': null });
+    assert.equal(m.exists('b.json'), false);
+    assert.throws(() => m.read('nope.json'), /ENOENT/);
+    m.writeAtomic('b.json', 'back');
+    assert.equal(m.changes()['b.json'], 'back');
+    note({ changedKeys: Object.keys(m.changes()).sort() });
+  });
+  await test('T70', 'The store lock serves callers in order and takes the lock back from one that outstays its lease', 'Three callers asking at once are served first-in first-out; a caller that never releases loses the lock when its lease ends, the next in line goes, and the one that lost it is told so when it tries to release.', async () => {
+    const { LockQueue, LockLostError } = await hostedSrc('lock');
+    const q = new LockQueue();
+    const order = [];
+    const run = async (name, holdMs) => { await q.acquire(name, 500); order.push(`${name}+`); await new Promise((r) => setTimeout(r, holdMs)); q.release(name); order.push(`${name}-`); };
+    await Promise.all([run('a', 20), run('b', 5), run('c', 5)]);
+    assert.deepEqual(order, ['a+', 'a-', 'b+', 'b-', 'c+', 'c-']);
+    await q.acquire('slow', 30); // never releases
+    const t0 = performance.now();
+    await q.acquire('next', 500);
+    const waited = performance.now() - t0;
+    assert.ok(waited >= 20 && waited < 300, `the next caller waited ${waited} ms`);
+    assert.throws(() => q.release('slow'), LockLostError);
+    q.release('next');
+    note({ order, waitedForLeaseMs: Math.round(waited) });
+  });
+  await test('T71', 'A stored file split into chunks comes back byte for byte', 'Files of no length, one chunk, an exact multiple of the chunk size and several chunks, with multi-byte characters across a boundary, are rejoined to exactly the text that went in, and no chunk exceeds the limit.', async () => {
+    const { splitChunks, joinChunks, CHUNK } = await hostedSrc('chunks');
+    const samples = ['', 'x', 'é'.repeat(10), 'a'.repeat(CHUNK), 'a'.repeat(CHUNK * 2), 'a'.repeat(CHUNK - 1) + '😀' + 'b'.repeat(CHUNK + 5), JSON.stringify({ cases: Array.from({ length: 3000 }, (_, i) => ({ i, t: 'Ünïcode ' + i })) })];
+    for (const text of samples) {
+      const parts = splitChunks(text);
+      assert.ok(parts.every((p) => p.length <= CHUNK), 'a chunk is over the limit');
+      assert.equal(joinChunks(parts.map((body, idx) => ({ idx, body })).reverse()), text); // order comes from idx, not arrival
+    }
+    note({ chunk: CHUNK, samples: samples.length });
+  });
+  await test('T72', 'The Worker accepts only a current, correctly signed Access token for its own application, and refuses everything when it is not configured', 'With a key pair made here: a good token passes; an expired one, one for another audience, another team, signed by another key, with a changed payload, or an unsigned or malformed one is refused; a key Access has rotated in is picked up by a fresh fetch; with no team domain or AUD set every request is refused; the local bypass works only for localhost and only when switched on; the token is found in the header or in the cookie.', async () => {
+    const access = await hostedSrc('access');
+    const kp = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+    const other = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+    const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const sign = async (key, payload, header = { alg: 'RS256', kid: 'k1', typ: 'JWT' }) => {
+      const body = `${enc(header)}.${enc(payload)}`;
+      const sig = Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key.privateKey, new TextEncoder().encode(body))).toString('base64url');
+      return `${body}.${sig}`;
+    };
+    const jwk = async (key, kid) => ({ ...(await crypto.subtle.exportKey('jwk', key.publicKey)), kid });
+    const team = 'mike.cloudflareaccess.com';
+    const cfg = { teamDomain: team, aud: 'AUD1' };
+    const now = 1_800_000_000;
+    const good = { aud: ['AUD1'], iss: `https://${team}`, exp: now + 600, nbf: now - 10, email: 'mike@example.com' };
+    let fetched = 0;
+    let published = [await jwk(kp, 'k1')];
+    const fetchCerts = async () => { fetched++; return published; };
+    const verify = (t, c = cfg) => access.verifyAccessJwt(t, c, fetchCerts, now);
+    assert.equal((await verify(await sign(kp, good))).email, 'mike@example.com');
+    const refused = async (t, why, c) => { await assert.rejects(() => verify(t, c), (e) => e.name === 'AccessError' && e.status === 403, `accepted: ${why}`); };
+    await refused(await sign(kp, { ...good, exp: now - 1 }), 'expired');
+    await refused(await sign(kp, { ...good, aud: ['OTHER'] }), 'other audience');
+    await refused(await sign(kp, { ...good, iss: 'https://evil.cloudflareaccess.com' }), 'other team');
+    await refused(await sign(other, good), 'another key');
+    const tampered = (await sign(kp, good)).split('.'); tampered[1] = enc({ ...good, email: 'attacker@example.com' });
+    await refused(tampered.join('.'), 'changed payload');
+    await refused(await sign(kp, good, { alg: 'none', kid: 'k1' }), 'alg none');
+    await refused('not.a.token', 'garbage');
+    await refused('x.y', 'two parts');
+    published = [await jwk(other, 'k2')];
+    const f0 = fetched;
+    await refused(await sign(kp, good, { alg: 'RS256', kid: 'k1' }), 'a key no longer published');
+    assert.ok(fetched - f0 >= 2, 'a missing key should trigger one fresh fetch');
+    published = [await jwk(kp, 'k1'), await jwk(other, 'k2')];
+    assert.ok((await verify(await sign(other, good, { alg: 'RS256', kid: 'k2' }))).email);
+    // the check as the Worker applies it
+    const nowReal = Math.floor(Date.now() / 1000);
+    const goodToken = await sign(kp, { ...good, exp: nowReal + 600, nbf: nowReal - 10 });
+    const req = (url, headers = {}) => new Request(url, { headers });
+    const env = { ACCESS_TEAM_DOMAIN: team, ACCESS_AUD: 'AUD1' };
+    assert.equal(await access.checkAccess(req('https://brolga.example/api/loans', { 'cf-access-jwt-assertion': goodToken }), env, fetchCerts), null);
+    assert.equal(await access.checkAccess(req('https://brolga.example/api/loans', { cookie: `a=b; CF_Authorization=${goodToken}` }), env, fetchCerts), null);
+    assert.equal((await access.checkAccess(req('https://brolga.example/api/loans'), env, fetchCerts)).status, 403);
+    for (const unset of [{}, { ACCESS_TEAM_DOMAIN: team }, { ACCESS_AUD: 'AUD1' }, { ACCESS_TEAM_DOMAIN: ' ', ACCESS_AUD: ' ' }]) {
+      assert.equal((await access.checkAccess(req('https://brolga.example/', { 'cf-access-jwt-assertion': goodToken }), unset, fetchCerts)).status, 503);
+    }
+    assert.equal(await access.checkAccess(req('http://localhost:8787/api/loans'), { BROLGA_DEV_NO_ACCESS: '1' }, fetchCerts), null);
+    assert.equal((await access.checkAccess(req('https://brolga.example/api/loans'), { BROLGA_DEV_NO_ACCESS: '1' }, fetchCerts)).status, 503, 'the local bypass must not work on a real host');
+    assert.equal((await access.checkAccess(req('http://localhost:8787/api/loans'), {}, fetchCerts)).status, 503, 'the local bypass must be switched on');
+    note({ refusals: ['expired', 'other audience', 'other team', 'other key', 'changed payload', 'alg none', 'garbage', 'rotated-out key'], failsClosedUnconfigured: true });
+  });
+  await test('T73', 'In the hosted build, requests that overlap lose no update, and the build runs on the mock provider with no key file', 'With the stored state behind a lock like the Durable Object\'s, twenty loans created at once all exist afterwards; the state a request leaves in memory is not seen by the next; the hosted build refuses ZEPTO_MODE=sandbox, ignores a Zepto token, and reads no key from a file.', async () => {
+    const files = await source('src/lib/files.ts');
+    const { LockQueue } = await hostedSrc('lock');
+    const { installScope, withStoreScope } = await hostedSrc('scope');
+    const stored = new Map();
+    const lock = new LockQueue();
+    const stub = {
+      async acquire(token, lease) { await lock.acquire(token, lease); await new Promise((r) => setTimeout(r, 1)); return Object.fromEntries(stored); },
+      async release(token, changes) { if (!lock.holds(token)) throw new Error('lost'); for (const [k, v] of Object.entries(changes)) if (v === null) stored.delete(k); else stored.set(k, v); lock.release(token); },
+    };
+    const env0 = { h: process.env.BROLGA_HOSTED, m: process.env.ZEPTO_MODE, t: process.env.ZEPTO_TOKEN };
+    try {
+      process.env.BROLGA_HOSTED = '1';
+      installScope(() => stub, {});
+      assert.throws(() => files.files().exists('x'), /outside a request scope/);
+      await Promise.all(Array.from({ length: 20 }, (_, i) => withStoreScope(stub, {}, () => domain.createLoan({ borrowerId: 'BRW-0001', principalCents: 100000 + i * 100, termFortnights: 4, purpose: `Hosted overlap ${i}` }))));
+      const loans = await withStoreScope(stub, {}, () => db.loadDb().loans.filter((l) => /^Hosted overlap/.test(l.purpose)));
+      assert.equal(loans.length, 20, 'an overlapping request lost an update');
+      assert.equal(new Set(loans.map((l) => l.id)).size, 20, 'two loans were given one id');
+      // a failed request keeps what it wrote before failing, and still lets the next in
+      await assert.rejects(() => withStoreScope(stub, {}, () => { domain.createLoan({ borrowerId: 'BRW-0001', principalCents: 50000, termFortnights: 4, purpose: 'Hosted failing' }); throw new Error('boom'); }), /boom/);
+      assert.equal(await withStoreScope(stub, {}, () => db.loadDb().loans.some((l) => l.purpose === 'Hosted failing')), true);
+      // a seed is used only until the file has been stored once
+      const seeded = await withStoreScope(stub, { '/seed/file.json': 'one' }, () => files.files().read('/seed/file.json'));
+      await withStoreScope(stub, { '/seed/file.json': 'one' }, () => files.files().writeAtomic('/seed/file.json', 'two'));
+      assert.equal(seeded, 'one');
+      assert.equal(await withStoreScope(stub, { '/seed/file.json': 'one' }, () => files.files().read('/seed/file.json')), 'two');
+      // mode and key
+      process.env.ZEPTO_MODE = 'sandbox';
+      assert.throws(() => configuredMode(), /mock provider only/);
+      process.env.ZEPTO_MODE = 'mock';
+      process.env.ZEPTO_TOKEN = 'a-token-that-must-be-ignored';
+      assert.equal(configuredMode(), 'mock');
+      const { readKey } = await source('src/lib/investigator/model.ts');
+      fs.writeFileSync(path.join(stateDir, '.env.local'), 'BROLGA_INVESTIGATOR_KEY=sk-from-a-file\n');
+      delete process.env.BROLGA_INVESTIGATOR_KEY;
+      assert.equal(readKey(stateDir), null, 'the hosted build read a key from a file');
+      delete process.env.BROLGA_HOSTED;
+      globalThis.__brolgaHost = {}; // a machine: no scope, the disk
+      assert.equal(readKey(stateDir), 'sk-from-a-file', 'a machine still reads the file');
+      note({ loansCreatedConcurrently: loans.length, storedFiles: [...stored.keys()].sort() });
+    } finally {
+      for (const [k, v] of [['BROLGA_HOSTED', env0.h], ['ZEPTO_MODE', env0.m], ['ZEPTO_TOKEN', env0.t]]) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      globalThis.__brolgaHost = {};
+      files.resetMemory();
+    }
   });
 } finally {
   globalThis.Date = RealDate;

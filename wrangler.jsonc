@@ -1,0 +1,31 @@
+{
+  // Brolga hosted: one Worker serving the app, one Durable Object holding its state.
+  // Everything here is public; no secret belongs in this file. The model key is a
+  // Worker secret typed in the Cloudflare dashboard (BROLGA_INVESTIGATOR_KEY).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brolga",
+  "main": "src/hosted/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Only the custom domain is reachable, and Cloudflare Access sits in front of it.
+  // The workers.dev address and preview URLs would sit outside Access, so they are off.
+  "workers_dev": false,
+  "preview_urls": false,
+
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "brolga" }],
+  "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "BrolgaStore" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BrolgaStore"] }],
+
+  "vars": {
+    // Hosted mode is mock-only: no Zepto token is read and sandbox mode refuses to start.
+    "BROLGA_HOSTED": "1",
+    "ZEPTO_MODE": "mock",
+    "BROLGA_INVESTIGATOR_STORE": "/store/investigator.json",
+    // Cloudflare Access: the team domain and the application's AUD tag (not secrets).
+    // The Worker refuses every request until both are set (stage C).
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  }
+}

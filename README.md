@@ -16,7 +16,7 @@ A demo, not a product.
 
 **What's measured:** built and verified end to end against the Zepto sandbox on
 12 September 2026 (Direct Entry disbursement, PayTo agreement, real-time collection with
-failure and retry, suspension, reactivation, bilateral amendment, cancellation). 68 offline
+failure and retry, suspension, reactivation, bilateral amendment, cancellation). 73 offline
 checks run the real domain code against a mock provider with a controllable clock, on
 every push (badge above). Four independent reviews shaped them. The first review's harness
 passed 14 of its 36 checks on its first run and became the regression suite. The second and
@@ -360,3 +360,21 @@ ways the numbers above needed to say more. All four are in the history.
 MIT — see `LICENSE`. The software is provided as is, without warranty of any kind;
 this is a demonstration of an integration, not a product, and it has never moved
 real money.
+
+## Hosted version (Cloudflare)
+
+The same app can run as a Cloudflare Worker behind a sign-in, so it opens on a phone from a
+link and installs to the home screen. It is the mock provider only (no Zepto token is ever
+read there), and the model key is a Worker secret, never a file.
+
+- `npm run build:hosted` makes the sixty investigator cases (`hosted/investigator.seed.txt`,
+  bundled as text) and builds the Worker with OpenNext.
+- `npm run preview:hosted` runs it locally with `wrangler dev`. Put `BROLGA_DEV_NO_ACCESS=1` in
+  a git-ignored `.dev.vars` to skip the sign-in on localhost only; without `ACCESS_TEAM_DOMAIN`
+  and `ACCESS_AUD` set, the Worker refuses every request.
+- State is one SQLite-backed Durable Object (`src/hosted/`): a request loads every stored file
+  under a lock, the app's synchronous code runs unchanged against that copy (`src/lib/files.ts`
+  is the one place that reads or writes state), and what changed is saved at the end. The
+  briefing route holds the lock only for its two short visits, never across the model call.
+- Cloudflare Access signs every request; the Worker checks the token itself as a second lock
+  (`src/hosted/access.ts`, tested offline in T72).

@@ -1,6 +1,6 @@
 {
   "assessment": "Brolga offline invariant suite (review harness v2)",
-  "executedAt": "2026-11-06T10:41:13.086Z",
+  "executedAt": "2026-11-12T12:34:15.677Z",
   "runtime": "v22.23.4",
   "sourceCodeModified": false,
   "method": "Direct calls into original TypeScript domain, mock, client and route modules; fake clock; selected in-memory fault injection; no HTTP server, browser automation, npm installs or Zepto traffic.",
@@ -10,8 +10,8 @@
     "blockedRealFetchAttempts": 2,
     "clientTests": "Injected in-memory fetch responses at review.invalid; no requests sent"
   },
-  "total": 68,
-  "passed": 68,
+  "total": 73,
+  "passed": 73,
   "failed": 0,
   "results": [
     {
@@ -1027,6 +1027,79 @@
         "carryRefusals": [
           "reworded question",
           "changed prepared evidence"
+        ]
+      }
+    },
+    {
+      "id": "T69",
+      "name": "A hosted request sees the stored files as a copy, and only what it changed is saved",
+      "expectation": "The in-memory files read what the snapshot held, a write or a seed is a change, a removed file is a deletion, an unchanged file is not saved, and reading a file that was never stored fails rather than inventing one.",
+      "result": "PASS",
+      "observations": {
+        "changedKeys": [
+          "a.copy.json",
+          "a.json",
+          "b.json",
+          "c.json"
+        ]
+      }
+    },
+    {
+      "id": "T70",
+      "name": "The store lock serves callers in order and takes the lock back from one that outstays its lease",
+      "expectation": "Three callers asking at once are served first-in first-out; a caller that never releases loses the lock when its lease ends, the next in line goes, and the one that lost it is told so when it tries to release.",
+      "result": "PASS",
+      "observations": {
+        "order": [
+          "a+",
+          "a-",
+          "b+",
+          "b-",
+          "c+",
+          "c-"
+        ],
+        "waitedForLeaseMs": 31
+      }
+    },
+    {
+      "id": "T71",
+      "name": "A stored file split into chunks comes back byte for byte",
+      "expectation": "Files of no length, one chunk, an exact multiple of the chunk size and several chunks, with multi-byte characters across a boundary, are rejoined to exactly the text that went in, and no chunk exceeds the limit.",
+      "result": "PASS",
+      "observations": {
+        "chunk": 200000,
+        "samples": 7
+      }
+    },
+    {
+      "id": "T72",
+      "name": "The Worker accepts only a current, correctly signed Access token for its own application, and refuses everything when it is not configured",
+      "expectation": "With a key pair made here: a good token passes; an expired one, one for another audience, another team, signed by another key, with a changed payload, or an unsigned or malformed one is refused; a key Access has rotated in is picked up by a fresh fetch; with no team domain or AUD set every request is refused; the local bypass works only for localhost and only when switched on; the token is found in the header or in the cookie.",
+      "result": "PASS",
+      "observations": {
+        "refusals": [
+          "expired",
+          "other audience",
+          "other team",
+          "other key",
+          "changed payload",
+          "alg none",
+          "garbage",
+          "rotated-out key"
+        ],
+        "failsClosedUnconfigured": true
+      }
+    },
+    {
+      "id": "T73",
+      "name": "In the hosted build, requests that overlap lose no update, and the build runs on the mock provider with no key file",
+      "expectation": "With the stored state behind a lock like the Durable Object's, twenty loans created at once all exist afterwards; the state a request leaves in memory is not seen by the next; the hosted build refuses ZEPTO_MODE=sandbox, ignores a Zepto token, and reads no key from a file.",
+      "result": "PASS",
+      "observations": {
+        "loansCreatedConcurrently": 20,
+        "storedFiles": [
+          "/seed/file.json",
+          "/tmp/brolga-review-state-yHfBOY/data/brolga.mock.json"
         ]
       }
     }

@@ -9,6 +9,12 @@ export type ZeptoMode = "sandbox" | "mock";
 
 export function configuredMode(): ZeptoMode {
   const m = (process.env.ZEPTO_MODE ?? "").toLowerCase();
+  // The hosted build is mock only. No Zepto token is ever read there, and asking for the
+  // sandbox is an error rather than a quiet fallback, so a mistake cannot go unnoticed.
+  if (process.env.BROLGA_HOSTED === "1") {
+    if (m === "sandbox") throw new Error("The hosted build runs on the mock provider only; ZEPTO_MODE=sandbox is refused.");
+    return "mock";
+  }
   if (m === "mock") return "mock";
   if (m === "sandbox") return "sandbox";
   return process.env.ZEPTO_TOKEN ? "sandbox" : "mock";

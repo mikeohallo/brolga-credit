@@ -3,8 +3,8 @@
 // never read this file; the investigator can be reset or removed without
 // touching anything that moves money.
 
-import fs from "node:fs";
 import path from "node:path";
+import { files } from "../files";
 import { configuredMode } from "../zepto";
 import { assignIds, renderCaseFile, type CaseRecord, type RenderedCaseFile } from "./case-file";
 import type { InvestigatorCase, InvestigatorStore, Mark } from "./types";
@@ -29,23 +29,14 @@ export function emptyStore(generator: string): InvestigatorStore {
 }
 
 export function loadStore(file = storePath()): InvestigatorStore | null {
-  if (!fs.existsSync(file)) return null;
-  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as InvestigatorStore;
+  if (!files().exists(file)) return null;
+  const parsed = JSON.parse(files().read(file)) as InvestigatorStore;
   if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.cases)) throw new Error(`${path.relative(process.cwd(), file)} is not an investigator store`);
   return parsed;
 }
 
 export function saveStore(store: InvestigatorStore, file = storePath()): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  // A temporary name of this process's own, so two writers (the cases script and
-  // the server, say) never share one and the rename is the only visible step.
-  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
-    fs.renameSync(tmp, file);
-  } finally {
-    fs.rmSync(tmp, { force: true });
-  }
+  files().writeAtomic(file, JSON.stringify(store, null, 2));
 }
 
 /** The hash of the case as sealed: its captured records and question, no evidence. The eval runs every trial from this state. */

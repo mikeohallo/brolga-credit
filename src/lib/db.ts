@@ -3,8 +3,8 @@
 // that a technical reviewer can open it and see exactly what state the app holds and
 // which Zepto references it is tracking.
 
-import fs from "node:fs";
 import path from "node:path";
+import { files, registerReset } from "./files";
 import { seedBorrowers } from "./seed";
 
 export type CopCheck = {
@@ -208,6 +208,10 @@ export type StoreStatus = { file: string; readable: boolean; error?: string };
 type Cache = { db: Db | null; file: string | null; error: string | null };
 const g = globalThis as unknown as { __brolgaDb?: Cache };
 if (!g.__brolgaDb) g.__brolgaDb = { db: null, file: null, error: null };
+// A hosted request starts from the stored copy, not from whatever an earlier request left in memory.
+registerReset(() => {
+  g.__brolgaDb = { db: null, file: null, error: null };
+});
 
 export function storeStatus(): StoreStatus {
   loadDb();
@@ -235,9 +239,9 @@ export function loadDb(): Db {
   if (cache.db && cache.file === file) return cache.db;
   cache.file = file;
   cache.error = null;
-  if (fs.existsSync(file)) {
+  if (files().exists(file)) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Db;
+      const parsed = JSON.parse(files().read(file)) as Db;
       if (!parsed || !Array.isArray(parsed.loans) || !Array.isArray(parsed.borrowers)) throw new Error("not a Brolga store");
       parsed.loans.forEach((l) => {
         l.adjustments ??= [];
@@ -267,20 +271,17 @@ export function saveDb(): void {
   if (!db) return;
   if (cache.error) throw new Error(`Refusing to write: ${cache.error}`);
   const file = cache.file ?? storeFile();
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = file + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, file);
+  files().writeAtomic(file, JSON.stringify(db, null, 2));
 }
 
 /** Archive the current store (if any) beside itself, then start clean. */
 export function resetDb(): Db {
   const cache = g.__brolgaDb!;
   const file = storeFile();
-  if (fs.existsSync(file) && !cache.error) {
+  if (files().exists(file) && !cache.error) {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     try {
-      fs.copyFileSync(file, file.replace(/\.json$/, `.archive-${stamp}.json`));
+      files().copy(file, file.replace(/\.json$/, `.archive-${stamp}.json`));
     } catch {
       /* archiving is best effort */
     }

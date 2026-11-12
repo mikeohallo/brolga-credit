@@ -46,3 +46,9 @@ data/
 !.env.example
 /screenshots/
 /reports/
+
+# Hosted build
+.open-next/
+.wrangler/
+.dev.vars
+hosted/investigator.seed.txt

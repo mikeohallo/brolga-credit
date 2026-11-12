@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import path from "node:path";
+import { files, registerReset } from "../files";
 import { appendApiLog } from "../db";
 import { currentApiContext } from "./context";
 import {
@@ -56,6 +56,9 @@ type MockState = {
 };
 
 const g = globalThis as unknown as { __brolgaMock?: MockState };
+registerReset(() => {
+  g.__brolgaMock = undefined;
+});
 
 // The mock provider's own "database". It is persisted next to the app's store so
 // that a restart (or a rehearsed fallback) finds the same agreements and payments
@@ -67,10 +70,7 @@ function persist(): void {
   const s = g.__brolgaMock;
   if (!s) return;
   try {
-    fs.mkdirSync(path.dirname(MOCK_FILE()), { recursive: true });
-    const tmp = MOCK_FILE() + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(s));
-    fs.renameSync(tmp, MOCK_FILE());
+    files().writeAtomic(MOCK_FILE(), JSON.stringify(s));
   } catch {
     /* best effort — an unwritable directory should not break a mock call */
   }
@@ -122,8 +122,8 @@ function initialState(): MockState {
 function state(): MockState {
   if (!g.__brolgaMock) {
     try {
-      if (fs.existsSync(MOCK_FILE())) {
-        const loaded = JSON.parse(fs.readFileSync(MOCK_FILE(), "utf8")) as MockState;
+      if (files().exists(MOCK_FILE())) {
+        const loaded = JSON.parse(files().read(MOCK_FILE())) as MockState;
         loaded.idempotency ??= {};
         g.__brolgaMock = loaded;
         return loaded;
@@ -140,7 +140,7 @@ function state(): MockState {
 export function resetMock(): void {
   g.__brolgaMock = initialState();
   try {
-    fs.rmSync(MOCK_FILE(), { force: true });
+    files().remove(MOCK_FILE());
   } catch {
     /* nothing to remove */
   }

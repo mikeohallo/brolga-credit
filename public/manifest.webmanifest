@@ -1,0 +1,15 @@
+{
+  "name": "Brolga Credit",
+  "short_name": "Brolga",
+  "description": "A consumer-lending demo: loans, PayTo repayments and a payments exception investigator.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f5",
+  "theme_color": "#0f5c50",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

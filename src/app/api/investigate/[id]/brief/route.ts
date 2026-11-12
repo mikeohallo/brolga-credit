@@ -1,4 +1,5 @@
 import { ok, fail, readJson } from "@/lib/api";
+import { inStore } from "@/lib/files";
 import { caseView, InvestigatorApiError, withCase } from "@/lib/investigator/api";
 import { MODELS, NO_KEY_MESSAGE, readKey } from "@/lib/investigator/model";
 import { produceBriefing } from "@/lib/investigator/run";
@@ -17,6 +18,8 @@ export const dynamic = "force-dynamic";
 // seconds, then the run is appended to the case as it is by then and saved. A
 // mark or a record added meanwhile survives (the fourth review, 6 Nov 2026, F1).
 // The run carries the hash of the file it actually read.
+// In the hosted build each visit is its own short scope under the store lock (inStore);
+// on a machine inStore does nothing and the files are the state.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -25,18 +28,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!MODELS.some((m) => m.id === model)) return fail(new Error(`Unknown model ${model}; the tab offers ${MODELS.map((m) => m.id).join(", ")}`), 400);
     const apiKey = readKey();
     if (!apiKey) return fail(new Error(NO_KEY_MESSAGE), 400);
-    const snapshot = await withCase(id, (c) => {
-      if (c.heldBack) throw new InvestigatorApiError(403, `${c.id} is held back from development; it is run only in the final comparison, by the eval script.`);
-      return structuredClone(c);
-    });
+    const snapshot = await inStore(() =>
+      withCase(id, (c) => {
+        if (c.heldBack) throw new InvestigatorApiError(403, `${c.id} is held back from development; it is run only in the final comparison, by the eval script.`);
+        return structuredClone(c);
+      }),
+    );
     const run = await produceBriefing(snapshot, { model, apiKey });
-    const view = await withCase(
-      id,
-      (c) => {
-        c.runs.push(run);
-        return caseView(c);
-      },
-      { save: true },
+    const view = await inStore(() =>
+      withCase(
+        id,
+        (c) => {
+          c.runs.push(run);
+          return caseView(c);
+        },
+        { save: true },
+      ),
     );
     return ok({ case: view });
   } catch (err) {

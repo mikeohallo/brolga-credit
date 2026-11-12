@@ -7,11 +7,15 @@
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "start": "next start -H 127.0.0.1",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:hosted": "node --disable-warning=ExperimentalWarning scripts/hosted-seed.mjs",
+    "build:hosted": "npm run seed:hosted && opennextjs-cloudflare build",
+    "preview:hosted": "wrangler dev --config wrangler.jsonc"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "^1.20.17",
     "geist": "^1.7.2",
-    "next": "^16.4.1",
+    "next": "^16.4.6",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -21,14 +25,21 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "^16.4.1",
+    "eslint-config-next": "^16.4.6",
     "playwright": "^1.63.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.160.1"
   },
   "overrides": {
     "@typescript-eslint/typescript-estree": {
       "minimatch": "^11.0.5"
+    },
+    "glob": {
+      "minimatch": "^11.0.5"
+    },
+    "@opennextjs/cloudflare": {
+      "glob": "^14.0.6"
     }
   }
 }

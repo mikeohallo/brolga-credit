@@ -5,8 +5,8 @@
 // file BROLGA_ENV_FILE names) and never logged, returned or written anywhere.
 // This module is server-only: the browser never holds the key or calls the model.
 
-import fs from "node:fs";
 import path from "node:path";
+import { files, isHosted } from "../files";
 
 export const KEY_VARIABLE = "BROLGA_INVESTIGATOR_KEY";
 export const API_VERSION = "2026-10-21";
@@ -135,9 +135,11 @@ export function keyFromEnv(): string | null {
 export function readKey(root = process.cwd()): string | null {
   const fromEnv = keyFromEnv();
   if (fromEnv) return fromEnv;
+  // The hosted build has no file to read: the key is a Worker secret, or there is none.
+  if (isHosted()) return null;
   const file = process.env.BROLGA_ENV_FILE?.trim() || path.join(root, ".env.local");
-  if (!fs.existsSync(file)) return null;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+  if (!files().exists(file)) return null;
+  for (const line of files().read(file).split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
     if (m && m[1] === KEY_VARIABLE) {
       const v = m[2].replace(/^["']|["']$/g, "");

@@ -31,9 +31,10 @@ this file never do.
 
 - `npm ci` (never `npm install`; the lockfile is the record of what runs).
 - `node --disable-warning=ExperimentalWarning tests/review/review-tests.mjs . tests/review/results.json`
-  — expect 68 passed, 0 failed; stop on any failure (two blocked network attempts are
+  — expect 73 passed, 0 failed; stop on any failure (two blocked network attempts are
   expected: T57 and T61 prove the model path is blocked offline). The suite ignores the
   investigator variables below, so a line may set them for every command.
+- Hosted build (Cloudflare, `src/hosted/`): `npm run build:hosted`, preview with `npm run preview:hosted`. Domain code never touches `fs` directly; it goes through `src/lib/files.ts`. Modules the suite loads must stay erasable TypeScript and must not import `cloudflare:workers` (only `store-do.ts` does). Deploying is a separate step with its own yes.
 - Build: `npm run build`. Run: `npm start` (binds to 127.0.0.1; never add `-H 0.0.0.0`).
   A `run` line on the `investigator` branch keeps the run folder and the copy while the
   app runs (the app is served from the copy; nothing is deleted at the end of the line,
