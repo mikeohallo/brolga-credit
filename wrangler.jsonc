@@ -13,6 +13,9 @@
   "workers_dev": false,
   "preview_urls": false,
 
+  // The one address the app answers on. Wrangler attaches it as a custom domain.
+  "routes": [{ "pattern": "brolga.mikeohalloran.au", "custom_domain": true }],
+
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
   "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "brolga" }],
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "BrolgaStore" }] },
@@ -24,8 +27,8 @@
     "ZEPTO_MODE": "mock",
     "BROLGA_INVESTIGATOR_STORE": "/store/investigator.json",
     // Cloudflare Access: the team domain and the application's AUD tag (not secrets).
-    // The Worker refuses every request until both are set (stage C).
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    // The Worker refuses every request (503) if either is empty.
+    "ACCESS_TEAM_DOMAIN": "mikeohalloran.cloudflareaccess.com",
+    "ACCESS_AUD": "33f0b704a25c54a5a44a21afd22e1d715562f777ceed66d53c6717cc8ef3ea9c"
   }
 }
