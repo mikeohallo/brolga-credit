@@ -150,4 +150,4 @@ export function readKey(root = process.cwd()): string | null {
 }
 
 /** The message an operator sees when there is no key; it names the variable, never a value. */
-export const NO_KEY_MESSAGE = `No investigator key. Put it in .env.local as ${KEY_VARIABLE}=... (git ignores that file), or point BROLGA_ENV_FILE at the file that holds it.`;
+export const NO_KEY_MESSAGE = `No investigator key. On a machine: put ${KEY_VARIABLE}=... in .env.local (git ignores that file), or point BROLGA_ENV_FILE at the file that holds it. Hosted: add it as the Worker's secret in the Cloudflare dashboard.`;

@@ -23,7 +23,7 @@ const SOURCE: { key: "brolga" | "provider" | "support"; title: string; hint: str
   { key: "provider", title: "The provider's records", hint: "what Zepto's API returned when asked; the only evidence of what the provider holds" },
   { key: "support", title: "Support and operator notes", hint: "what people said; not evidence of what the provider holds" },
 ];
-const NO_KEY = "No key configured: put BROLGA_INVESTIGATOR_KEY in .env.local (or point BROLGA_ENV_FILE at the file that holds it) and restart.";
+const NO_KEY = "No key configured. On a machine: put BROLGA_INVESTIGATOR_KEY in .env.local (or the file BROLGA_ENV_FILE names) and restart. Hosted: add it as the Worker's secret in the Cloudflare dashboard.";
 const HELD_BACK = "Held back from development: this case is run only in the final comparison, by the eval script.";
 
 export function Investigate() {

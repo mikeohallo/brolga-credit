@@ -371,7 +371,9 @@ read there), and the model key is a Worker secret, never a file.
   bundled as text) and builds the Worker with OpenNext.
 - `npm run preview:hosted` runs it locally with `wrangler dev`. Put `BROLGA_DEV_NO_ACCESS=1` in
   a git-ignored `.dev.vars` to skip the sign-in on localhost only; without `ACCESS_TEAM_DOMAIN`
-  and `ACCESS_AUD` set, the Worker refuses every request.
+  and `ACCESS_AUD` set, the Worker refuses every request. Because `wrangler.jsonc` names the
+  custom domain, `wrangler dev` answers as that host and the localhost bypass does not apply:
+  preview from a copy of the config without `routes` (`wrangler dev --config <copy>`).
 - State is one SQLite-backed Durable Object (`src/hosted/`): a request loads every stored file
   under a lock, the app's synchronous code runs unchanged against that copy (`src/lib/files.ts`
   is the one place that reads or writes state), and what changed is saved at the end. The
