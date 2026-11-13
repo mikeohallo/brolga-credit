@@ -21,6 +21,25 @@ export interface Files {
   copy(from: string, to: string): void;
 }
 
+// Windows refuses a rename over a file that something (an antivirus scan, the search
+// indexer, another reader) has open for a moment: EPERM, EACCES or EBUSY. The refusal
+// passes within a few milliseconds, so the rename is tried again, a little later each time,
+// for about a second, and only then is the error let through. Other errors are never retried.
+const TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY"]);
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function renameOver(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (attempt >= 14 || !code || !TRANSIENT.has(code)) throw err;
+      pause(5 + attempt * 10);
+    }
+  }
+}
+
 const diskFiles: Files = {
   exists: (file) => fs.existsSync(file),
   read: (file) => fs.readFileSync(file, "utf8"),
@@ -31,7 +50,7 @@ const diskFiles: Files = {
     const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
     try {
       fs.writeFileSync(tmp, text);
-      fs.renameSync(tmp, file);
+      renameOver(tmp, file);
     } finally {
       fs.rmSync(tmp, { force: true });
     }

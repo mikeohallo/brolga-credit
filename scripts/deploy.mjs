@@ -238,7 +238,12 @@ function checkConfig() {
   return cfg;
 }
 
-function checkToolchain() {
+function checkToolchain(required) {
+  if (!existsSync(path.join(ROOT, "node_modules", "wrangler", "package.json"))) {
+    if (required) fail("the packages are not installed (run npm ci first)");
+    ok("the toolchain's versions are checked after the install (not installed yet)");
+    return;
+  }
   const lock = JSON.parse(readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
   for (const pkg of ["wrangler", "@opennextjs/cloudflare"]) {
     const want = lock.packages?.[`node_modules/${pkg}`]?.version;
@@ -250,14 +255,16 @@ function checkToolchain() {
   if (existsSync(cache)) { rmSync(cache, { recursive: true }); ok("deleted node_modules/.cache"); }
 }
 
-function preflight(commit, allowedIgnored) {
+// `preflight` runs before the install, so it checks the toolchain only if it is there;
+// `build` and `ship` always do.
+function preflight(commit, allowedIgnored, toolchainRequired = true) {
   checkEnvironment();
   checkNpmSettings();
   checkCommit(commit);
   checkLeftovers(allowedIgnored);
   checkConfig();
-  checkToolchain();
   checkNoLogin("before the build");
+  checkToolchain(toolchainRequired);
 }
 
 // ---------- build ----------
@@ -372,7 +379,7 @@ const reportPath = reportFlag >= 0 ? rest[reportFlag + 1] : null;
 try {
   if (reportPath && path.resolve(reportPath).startsWith(ROOT + path.sep)) fail("the report file must be outside this repository");
   if (cmd === "preflight") {
-    preflight(commit, ["node_modules/"]);
+    preflight(commit, ["node_modules/"], false);
     say("PREFLIGHT OK: nothing was built, nothing deployed.");
   } else if (cmd === "build" || cmd === "rehearse") {
     preflight(commit, ["node_modules/"]);
