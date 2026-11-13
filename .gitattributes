@@ -1,0 +1,2 @@
+# One line ending everywhere, whatever the machine's git settings (Windows checkouts otherwise get CRLF and the deploy script sees a dirty tree).
+* text=auto eol=lf
